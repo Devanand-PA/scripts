@@ -1,0 +1,7 @@
+#!/bin/bash
+while true
+do
+cat ~/scripts/talk/speech | shuf | head -1
+read response
+echo $response >> ~/scripts/talk/speech
+done 

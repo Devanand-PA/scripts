@@ -1,0 +1,3 @@
+#!/bin/bash
+echo "$(date) $(uptime)" >> /home/devanandpa/scripts/uptime_counter/data
+systemctl poweroff
