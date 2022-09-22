@@ -10,5 +10,7 @@ case $FILETYPE in
 		FILEPROGRAM="sxiv" ;;
 	mp4 | webm | mkv | opus | mp3)
 		FILEPROGRAM="mpv" ;;
+	*)
+		FILEPROGRAM="vim" ;;
 esac
 $FILEPROGRAM "$FILENAME"
