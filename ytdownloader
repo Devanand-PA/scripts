@@ -1,0 +1,39 @@
+#!/bin/bash
+search() {
+	echo "Searchquery:"
+	read -e searchquery
+	curl "https://invidious.snopyta.org/search?q=$(echo "$searchquery" | sed 's/\ /+/g')&type=video" > /tmp/searchquery
+	curl "https://invidious.snopyta.org/search?q=$(echo "$searchquery" | sed 's/\ /+/g')&type=video&page=2" >> /tmp/searchquery
+	curl "https://invidious.snopyta.org/search?q=$(echo "$searchquery" | sed 's/\ /+/g')&type=video&page=3" >> /tmp/searchquery
+	grep "p dir=\"auto\"" /tmp/searchquery | grep -v "&nbsp" | awk -F ">" '{print $2}' | sed 's/<\/p//g' | sed 's/\ /_/g' > /tmp/searchtitle
+	grep channel-name /tmp/searchquery |   awk -F ">" '{print $2}' | awk -F "&nbsp" '{print $1}' | sed 's/<\/p//g' | sed 's/\ /_/g' > /tmp/channelname
+	grep youtube /tmp/searchquery | grep watch | awk -F "\"" '{print $4}'  > /tmp/searchurl
+}
+
+selectplay() {
+		URLLINK="$(paste /tmp/searchtitle /tmp/channelname /tmp/searchurl | column -t | uniq |  fzf -m | awk '{print $NF}')"
+		echo "Read format"
+		read FORMAT
+		yt-dlp  --format=$FORMAT $URLLINK
+}
+searchagain=0
+
+main() {
+	search
+	selectplay
+}
+
+main
+while true
+do
+echo "Search again? y=yes, s=select , anythingelse=exit"
+read searchagain
+case $searchagain in
+	1 | y | yes)
+	main ;;
+	s)
+	selectplay ;;
+	*)
+	exit ;;
+esac
+done

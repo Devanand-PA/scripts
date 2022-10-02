@@ -1,0 +1,3 @@
+#!/bin/bash
+VM="$(ls ~/VMs | fzf)"
+qemu-system-x86_64 ~/VMs/$VM -m 4G -accel kvm -vga virtio -display sdl,gl=on -cpu host -smp 10 -device AC97

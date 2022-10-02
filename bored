@@ -1,0 +1,2 @@
+#!/bin/bash
+$(cat ~/scripts/boredscripts/scriptlist | shuf | head -1)

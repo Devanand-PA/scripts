@@ -1,0 +1,3 @@
+#!/bin/bash
+currentbrightness="$(cat /sys/class/backlight/intel_backlight/brightness)"
+echo "$(($currentbrightness-1000))" > /sys/class/backlight/intel_backlight/brightness

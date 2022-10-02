@@ -3,5 +3,5 @@ while true
 do
 	echo -e "\e[0;33m $(cat ~/scripts/talk/speech | shuf | head -1) \e[0m"
 	read -e response
-	echo $response >> ~/scripts/talk/speech
+	echo $response >> ~/scripts/talk/.speech
 done 

@@ -1,0 +1,10 @@
+#!/bin/bash
+echo '
+
+' >> ~/scripts/talk/listen
+date >> ~/scripts/talk/listen
+while true
+do
+	read -e response
+	echo $response >> ~/scripts/talk/listen
+done 

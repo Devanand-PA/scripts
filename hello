@@ -1,2 +1,2 @@
 #!/bin/bash
-cat ~/scripts/helloscripts/hello | shuf | head -1
+echo -e "\e[0;33m$(cat ~/scripts/helloscripts/hello | shuf | head -1) \e[0m"
