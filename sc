@@ -1,5 +1,5 @@
 #!/bin/bash
-FILENAME="$(du -a | awk '{$1="FileSizeInDu";print $0}' | awk -F "FileSizeInDu " '{print $NF}' | dmenu -i -l 30 -sb "#bb0000" -fn "monospace:size=14")"
+FILENAME="$(du -a | awk '{$1="FileSizeInDu";print $0}' | awk -F "FileSizeInDu " '{print $NF}' | dmenu -i -l 30 -sf "#000000" -nb "#000000" -sb "#007700" -fn "monospace:size=14")"
 FILETYPE="$(echo $FILENAME | awk -F "." '{print $NF}')"
 echo $FILETYPE
 if [ -z $FILETYPE ]
