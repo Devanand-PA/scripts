@@ -1,0 +1,17 @@
+#!/bin/bash
+echo "What should be the title?"
+read title
+if [ -z $title ]
+then
+	file="~/scripts/poetry/$(date)"
+else
+	file="~/scripts/poetry/$title"
+fi
+#Replace '~' with actual /home/your_user_name
+touch "$file"
+echo "$title" >> "$file"
+while true
+do
+	read -e response
+	echo "$response" >> "$file"
+done 
