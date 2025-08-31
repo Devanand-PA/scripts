@@ -1,0 +1,12 @@
+#!/bin/python3
+import subprocess
+
+sinks = subprocess.check_output(["pactl list short sinks | awk '{print $2}' | grep -v 'dual_output'"],shell=True,text=True)
+selected_sinks = list(subprocess.check_output(["dmenu","-l","10"],input=sinks,text=True).rstrip().split('\n'))
+
+if len(selected_sinks) == 1 :
+    subprocess.run(["pactl","set-default-sink",selected_sinks[0]])
+elif len(selected_sinks) > 1 :
+    subprocess.run(["pactl","load-module", "module-combine-sink", "sink_name=dual_output", "slaves="+",".join(selected_sinks)])
+    subprocess.run(["pactl","set-default-sink","dual_output"])
+
