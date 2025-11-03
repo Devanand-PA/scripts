@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+import subprocess
+import re
+import sys
+
+def get_mpris_player():
+    """Get the currently active MPRIS player"""
+    try:
+        # Get list of players
+        players = subprocess.check_output(
+            ["playerctl", "-l"], text=True
+        ).strip().split('\n')
+        
+        # Find the first playing player
+        for player in players:
+            try:
+                status = subprocess.check_output(
+                    ["playerctl", "-p", player, "status"], 
+                    text=True
+                ).strip()
+                if status == "Playing":
+                    return player
+            except:
+                continue
+        
+        # If no playing player, return the first available
+        if players and players[0]:
+            return players[0]
+            
+    except Exception as e:
+        print(f"Error getting MPRIS player: {e}", file=sys.stderr)
+    
+    return None
+
+def get_player_pid(player_name):
+    """Extract PID from player name or metadata"""
+    # Try to extract PID from player name (common format: player.PID)
+    pid_match = re.search(r'\.(\d+)$', player_name)
+    if pid_match:
+        return pid_match.group(1)
+    
+    # For Firefox, we need to handle it differently
+    if 'firefox' in player_name.lower():
+        return find_firefox_window_pid()
+    
+    return None
+
+def find_firefox_window_pid():
+    """Find Firefox window PID by checking hyprctl clients"""
+    try:
+        windows = subprocess.check_output(
+            ["hyprctl", "clients"], text=True
+        ).split("\n\n")
+        
+        for window in windows:
+            window_lines = window.split('\n')
+            window_info = {}
+            
+            # Parse window info
+            for line in window_lines:
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    window_info[key.strip()] = value.strip()
+            
+            # Look for Firefox windows
+            if 'class' in window_info and 'firefox' in window_info['class'].lower():
+                if 'pid' in window_info:
+                    return window_info['pid']
+    
+    except Exception as e:
+        print(f"Error finding Firefox window: {e}", file=sys.stderr)
+    
+    return None
+
+def focus_window_by_pid(pid):
+    """Focus window using PID"""
+    try:
+        result = subprocess.run(
+            ["hyprctl", "dispatch", "focuswindow", f"pid:{pid}"],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            print(f"Focused window with PID: {pid}")
+            return True
+        else:
+            print(f"Failed to focus window: {result.stderr}", file=sys.stderr)
+            return False
+    except Exception as e:
+        print(f"Error focusing window: {e}", file=sys.stderr)
+        return False
+
+def focus_window_by_class(class_name):
+    """Fallback: focus window by class name"""
+    try:
+        result = subprocess.run(
+            ["hyprctl", "dispatch", "focuswindow", f"class:^{class_name}$"],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            print(f"Focused window with class: {class_name}")
+            return True
+        else:
+            print(f"Failed to focus by class: {result.stderr}", file=sys.stderr)
+            return False
+    except Exception as e:
+        print(f"Error focusing by class: {e}", file=sys.stderr)
+        return False
+
+def main():
+    # Get currently active player
+    player = get_mpris_player()
+    
+    if not player:
+        print("No active MPRIS player found", file=sys.stderr)
+        sys.exit(1)
+    
+    print(f"Found active player: {player}")
+    
+    # Try to get PID from player name
+    pid = get_player_pid(player)
+    
+    # Try to focus by PID first
+    if pid and focus_window_by_pid(pid):
+        sys.exit(0)
+    
+    # Fallback: focus by application class
+    player_class = player.split('.')[0]  # Extract base name (firefox, spotify, etc.)
+    
+    # Map common player names to window classes
+    class_map = {
+        'firefox': 'firefox',
+        'chromium': 'chromium',
+        'google-chrome': 'google-chrome',
+        'spotify': 'spotify',
+        'vlc': 'vlc',
+        'mpv': 'mpv'
+    }
+    
+    window_class = class_map.get(player_class, player_class)
+    
+    if focus_window_by_class(window_class):
+        sys.exit(0)
+    
+    # Final fallback: try focusing by partial class match
+    print(f"Trying partial class match for: {player_class}")
+    try:
+        subprocess.run([
+            "hyprctl", "dispatch", "focuswindow", 
+            f"class:.*{player_class}.*"
+        ], check=True)
+        print(f"Focused window with partial class match: {player_class}")
+        sys.exit(0)
+    except:
+        pass
+    
+    print(f"Could not find window for player: {player}", file=sys.stderr)
+    sys.exit(1)
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,5 @@
+#!/bin/bash
+pidof hyprpaper || (hyprpaper &)
+pic="$( find ~/Pictures/Backgrounds/ -type f | shuf | head -1)"
+hyprctl hyprpaper preload "$pic"
+hyprctl hyprpaper wallpaper HDMI-A-1,"$pic"
