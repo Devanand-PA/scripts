@@ -2,7 +2,7 @@
 import subprocess
 
 sinks = subprocess.check_output(["pactl list short sinks | awk '{print $2}' | grep -v 'dual_output'"],shell=True,text=True)
-selected_sinks = list(subprocess.check_output(["rofi","-dmenu","-multi-select"],input=sinks,text=True).rstrip().split('\n'))
+selected_sinks = list(subprocess.check_output(["dmenu","-l","30"],input=sinks,text=True).rstrip().split('\n'))
 
 if len(selected_sinks) == 1 :
     subprocess.run(["pactl","set-default-sink",selected_sinks[0]])

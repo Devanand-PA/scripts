@@ -16,7 +16,7 @@ if not(DIRS) :
     for i in range(len(MusicDIRS)) :
         MusicDIRS[i] = os.path.relpath(MusicDIRS[i],os.path.expanduser("~/Music/"))
     MusicDIRS="\n".join(MusicDIRS)
-    selDIRS = subprocess.check_output(['rofi','-dmenu'],input=MusicDIRS,text=True).rstrip()
+    selDIRS = subprocess.check_output(['dmenu','-l','30'],input=MusicDIRS,text=True).rstrip()
     for dir in selDIRS.split('\n') :
         DIRS.append(os.path.join(os.path.expanduser("~/Music/"),dir))
 

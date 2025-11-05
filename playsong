@@ -6,9 +6,9 @@ import tempfile
 
 ARGS=sys.argv
 musicdir=os.path.expanduser("~/Music/") # ~/Music/
-
+menu = ["dmenu","-i","-l","30"]
 # Select What to do
-mode = subprocess.check_output(["rofi","-dmenu","-i"],input="Play Playlist\nPlay Song\nCreate Playlist",text=True).rstrip() 
+mode = subprocess.check_output(menu,input="Play Playlist\nPlay Song\nCreate Playlist",text=True).rstrip() 
 
 # Create Playlist
 if (mode=="Create Playlist") :
@@ -19,11 +19,11 @@ if (mode=="Create Playlist") :
             all_songs.remove(song)
     all_songs="\n".join(all_songs).rstrip()
     ## select songs from find
-    selected_songs=subprocess.check_output(["rofi","-dmenu","-multi-select","-p","Select Songs","-i"],text=True,input=all_songs).rstrip()
+    selected_songs=subprocess.check_output(menu+["-p","Select Songs"],text=True,input=all_songs).rstrip()
     
 
     ## Name Playlist
-    playlist_name = subprocess.check_output(["rofi","-dmenu","-multi-select","-p","Name the Playlist","-i"],text=True,input="").rstrip()
+    playlist_name = subprocess.check_output(menu+["-p","Name the Playlist"],text=True,input="").rstrip()
     with open(musicdir+"Playlists/"+playlist_name+".txt",'w') as playlist_file :
         playlist_file.write(selected_songs)
 
@@ -31,7 +31,7 @@ if (mode=="Create Playlist") :
 # Play Playlist
 elif (mode=="Play Playlist") :
     all_playlists=subprocess.check_output(["ls",musicdir+"Playlists/"],text=True).rstrip()
-    selected_playlist=subprocess.check_output(["rofi","-dmenu","-multi-select","-p","Select a playlist","-i"],text=True,input=all_playlists).rstrip()
+    selected_playlist=subprocess.check_output(menu+["-p","Select a playlist"],text=True,input=all_playlists).rstrip()
     selected_playlist=musicdir+"Playlists/"+selected_playlist
     print(selected_playlist)
     # Now run `find` in selected_playlist and store it to a temporary file. Mpv will play from this temporary file so that it can shuffle properly
@@ -41,7 +41,7 @@ elif (mode=="Play Playlist") :
         
         tmp.write(shuffled_playlist)
         tmppath = tmp.name
-    subprocess.run(['mpv','ao=alsa','--player-operation-mode=pseudo-gui','-fs','--sub-pos=55','--sub-scale=0.75','--no-resume-playback',"--playlist="+tmppath,'shuffle=yes']+ARGS)
+    subprocess.run(['mpv','ao=alsa','--player-operation-mode=pseudo-gui','-fs','--sub-pos=55','--sub-scale=0.75','--no-resume-playback',"--playlist="+tmppath,'--shuffle=yes']+ARGS)
     os.unlink(tmppath)
 
 
@@ -54,7 +54,7 @@ elif (mode=="Play Song"):
             all_songs.remove(song)
     all_songs="\n".join(all_songs).rstrip()
     ## select songs from find
-    selected_songs=subprocess.check_output(["rofi","-dmenu","-multi-select","-p","Select Songs","-i"],text=True,input=all_songs).rstrip()
+    selected_songs=subprocess.check_output(menu +["-p","Select Songs"],text=True,input=all_songs).rstrip()
     selected_songs = selected_songs.split('\n')
-    subprocess.run(['mpv','ao=alsa','--player-operation-mode=pseudo-gui','-fs','--sub-pos=55','--sub-scale=0.75','--no-resume-playback']+selected_songs+['shuffle=yes']+ARGS)
+    subprocess.run(['mpv','ao=alsa','--player-operation-mode=pseudo-gui','-fs','--sub-pos=55','--sub-scale=0.75','--no-resume-playback']+selected_songs+['--shuffle=yes']+ARGS)
 
