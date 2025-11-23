@@ -1,0 +1,192 @@
+#!/usr/bin/env python
+from llama_cpp import Llama
+import readline
+import time
+import subprocess
+import sys
+username = "Thevy"
+AI_name = "Clos"
+messages = [
+    {"role": "system", "content": "You are a personal assistant."},
+]
+enable_image = False
+print(f'\033]0;talk2\007', end='', flush=True)
+
+if "-c" in sys.argv :
+
+    messages = [
+        {"role": "system", "content": input('\033[33mEnter the system prompt :\033[0m')},
+    ]
+
+def add_user_context():
+    messages[0]["content"] += f"\nI am {username}.\n"
+
+add_user_context()
+##############[IMAGES]#######################
+#############################################
+ARGS=["-l"] + sys.argv
+if "-l" in ARGS :
+    ## here starts a stupid image script
+    import os
+    import json
+    with open(os.path.expanduser('~/.local/share/talk2/characters.json')) as jsonfile :
+        characters = jsonfile.read()
+    characters = json.loads(characters)
+    character_names = ''
+    for i in characters :
+        character_names += i+"\n"
+    AI_name = subprocess.check_output(["dmenu","-l","30"],text=True,input=character_names.rstrip()).rstrip()
+    messages = [ characters[AI_name]['message'] ]
+    
+    if "imagedir" in characters[AI_name] :
+        imagedir = os.path.expanduser(characters[AI_name]["imagedir"])
+        import threading
+        image_to_set = os.path.join(imagedir,"default.jpg")
+        if not os.path.exists(image_to_set) :
+            for i in os.listdir(imagedir) :
+                if "default" in i :
+                    image_to_set = os.path.join(imagedir,i)
+                    break
+            if not os.path.exists(imagedir) :
+                    import random
+                    image_to_set = os.path.join(imagedir,random.choice(os.listdir(imagedir)))
+
+
+        enable_image = True
+        def create_image_window() :
+            import tkinter as tk
+            from PIL import Image, ImageTk
+            image_window = tk.Tk()
+            screenwidth = image_window.winfo_screenwidth()
+            screenheight = image_window.winfo_screenheight()
+            image_window.title(AI_name)
+            image_window.resizable(False, False)  # Prevent resizing
+            #image
+            label = tk.Label(image_window)
+            label.pack()
+
+            ### Set image function
+            ########################
+            def set_image(image_to_set):
+                AI_image = Image.open(image_to_set)
+                imgwidth ,imgheight = AI_image.size
+                if (imgwidth > (screenwidth*(3/4)) ) or (imgheight > (screenheight*(3/4))):
+                    a_ratio = imgwidth/imgheight
+                    AI_image = AI_image.resize( ( int(a_ratio*(screenheight*0.8)) , int(screenheight*0.8) ))
+                    imgwidth ,imgheight = AI_image.size
+                image_window.geometry(f"{imgwidth}x{imgheight}+{int(screenwidth-imgwidth)}+{int(screenheight-imgheight)}")
+                tkimg = ImageTk.PhotoImage(AI_image)
+                label.configure(image=tkimg)
+                label.image = tkimg
+                image_window.update()
+
+            #############################
+            set_image(image_to_set)
+            image_window.transient()
+            image_window.attributes('-topmost', True)  # Always on top
+            image_window.attributes('-topmost', False)
+            #image_window.attributes('-disabled', True)  # Make it unfocusable
+            return set_image
+        
+        
+        #image_thread = threading.Thread(target=create_image_window,daemon=True)
+        #image_thread.start()
+        set_image = create_image_window()
+        pose_list = os.listdir(imagedir)
+        for i in range(len(pose_list)) :
+            pose_list[i] = "<" + pose_list[i] + ">"
+        add_user_context()
+        if len(pose_list) > 1 :
+            messages[0]["content"] += f"Note : You are allowed to choose toggles(comprising of expressions,poses,etc) as you deem fit for the context. Currently , the available toggles are: {pose_list}. Use the toggles whenever you feel like it !"
+        
+
+
+#################################################
+
+
+
+try :
+    model_gguf = subprocess.check_output("find ~/.lmstudio/models/ | grep .gguf$ | dmenu -l 30",shell=True,text=True).rstrip()
+    set_image(image_to_set)
+except :
+    quit()
+dry_llm = Llama(model_path=model_gguf,vocab_only=True)
+model_metadata = dry_llm.metadata
+for i in model_metadata :
+    if "context_length" in i :
+        max_ctx = int(model_metadata[i])
+subprocess.run('clear')
+llm = Llama(
+    model_path=model_gguf,
+    n_ctx=min(16*1024,max_ctx),
+    n_threads=12,
+    n_gpu_layers=16,
+    verbose=False
+)
+
+
+if "-h" in sys.argv :
+    histfile = subprocess.check_output("find ~/.local/share/talk2/histories/ | grep .json$ | fzf --preview='bat --color=always {}' --preview-window=up,90%",shell=True,text=True).rstrip()
+    with open(histfile) as file :
+        messages = file.read()
+    messages = json.loads(messages)
+
+subprocess.run('clear')
+
+print(f"\033[32;1m {username}:\033[0m ",end='')
+user_input = input()
+
+messages.append({"role": "user", "content": user_input})
+
+def ch_img(sample_text):
+    last_position = -1
+    last_occurence = None
+    if enable_image :
+        for target in pose_list :
+            position = sample_text.rfind(target)
+            if position > last_position :
+                last_position = position
+                last_occurence = target
+    
+    if last_occurence :
+        image_to_set = os.path.join(imagedir,last_occurence[1:-1])
+        set_image(image_to_set)
+
+#ch_img(user_input)
+###############[main loop]##################
+#############################################
+while user_input :
+    response = llm.create_chat_completion(
+    messages=messages,
+    max_tokens=512,
+    temperature=0.7,
+    top_p=0.95,
+    stream=True
+    )
+    response_txt = ''
+    print(f"\033[32;1m {AI_name}:\033[0m ",end='')
+    for output in response:
+        chunk = output
+        if 'content' in chunk["choices"][0]['delta'] :
+            new_response = chunk["choices"][0]['delta']['content']
+            print(new_response ,flush=True,end='')    
+            response_txt += new_response
+            ch_img(response_txt)
+
+
+
+    print('')
+    print(f"\033[32;1m {username}:\033[0m ",end='')
+    messages.append({"role": "assistant", "content": response_txt})
+    user_input = input()
+    #ch_img(user_input)
+    messages.append({"role": "user", "content": user_input})
+#############################################
+histfile = os.path.join( os.path.expanduser('~/.local/share/talk2/histories/') , AI_name )
+if not os.path.exists(histfile):
+    subprocess.run(['mkdir','-p',histfile])
+histfile = histfile +"/"+str(time.time())+".json"
+
+with open( histfile ,'w') as file :
+    json.dump(messages, file,indent=4)
+
