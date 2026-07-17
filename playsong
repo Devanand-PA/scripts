@@ -6,17 +6,63 @@ import tempfile
 
 ARGS=sys.argv
 musicdir=os.path.expanduser("~/Music/") # ~/Music/
-menu = ["dmenu","-i","-l","30"]
+menu = ["dmenu","-i","-l","35"]
 # Select What to do
-mode = subprocess.check_output(menu,input="Play Playlist\nPlay Song\nCreate Playlist",text=True).rstrip() 
+mode = subprocess.check_output(menu+["-p","What do you want to Do ?"],input="Play Playlist\nPlay Song\nCreate Playlist\nAdd to Playlist\nRemove from Playlist",text=True).rstrip() 
+
+if (mode == "Remove from Playlist") :
+    all_playlists=subprocess.check_output(["ls",musicdir+"Playlists/"],text=True).rstrip()
+    selected_playlist=subprocess.check_output(menu+["-p","Select a playlist"],text=True,input=all_playlists).rstrip()
+    selected_playlist=musicdir+"Playlists/"+selected_playlist
+    with open(selected_playlist) as FILE :
+        songs_in_playlist = FILE.read()
+    selected_songs=subprocess.check_output(menu+["-p","Select Songs to remove"],text=True,input=songs_in_playlist).rstrip()
+    songs_in_playlist = list(songs_in_playlist.split('\n'))
+    selected_songs = list(selected_songs.split('\n'))
+    for i in range(len(songs_in_playlist)-1,-1,-1) :
+        for song in selected_songs :
+            if songs_in_playlist[i] == song :
+                del songs_in_playlist[i]
+                print("removed",song)
+                break
+
+    all_songs="\n".join(songs_in_playlist).rstrip()
+    with open(selected_playlist,'w') as FILE :
+        FILE.write(all_songs)
+
+
+
+## Add to playlist
+if (mode=="Add to Playlist") :
+    all_playlists=subprocess.check_output(["ls",musicdir+"Playlists/"],text=True).rstrip()
+    selected_playlist=subprocess.check_output(menu+["-p","Select a playlist"],text=True,input=all_playlists).rstrip()
+    selected_playlist=musicdir+"Playlists/"+selected_playlist
+    with open(selected_playlist) as FILE :
+        songs_in_playlist = [ i.rstrip() for i in FILE.readlines()]
+
+    all_songs=subprocess.check_output(["find",musicdir],text=True).rstrip().split('\n')
+    all_songs = [
+    song
+    for song in all_songs
+    if not ( song.endswith((".txt", ".vtt")) or (song in songs_in_playlist) )
+    ]
+    all_songs="\n".join(all_songs).rstrip()
+    ## select songs from find
+    selected_songs=subprocess.check_output(menu+["-p","Select Songs"],text=True,input=all_songs).rstrip()
+    if selected_songs :
+        with open(selected_playlist,'a') as FILE :
+            FILE.write(selected_songs)
+
 
 # Create Playlist
-if (mode=="Create Playlist") :
+elif (mode=="Create Playlist") :
     ## Remove txt and vtt files from find
     all_songs=subprocess.check_output(["find",musicdir],text=True).rstrip().split('\n')
-    for song in all_songs :
-        if song[-3:] in ["vtt","txt"] :
-            all_songs.remove(song)
+    all_songs = [
+    song
+    for song in all_songs
+    if not song.endswith((".txt", ".vtt"))
+]
     all_songs="\n".join(all_songs).rstrip()
     ## select songs from find
     selected_songs=subprocess.check_output(menu+["-p","Select Songs"],text=True,input=all_songs).rstrip()
