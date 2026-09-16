@@ -23,27 +23,32 @@ Views:
     --gallery-rows N  : target number of gallery rows visible (default 3.5)
     --gallery-cols N  : target number of gallery columns visible
     --gallery-tile-size N : explicit gallery tile size in pixels (overrides rows/cols)
-    --gallery-aspect N    : tile width/height ratio (default: auto-detected
-                            from the images, so screenshots fill their tiles)
+    --gallery-aspect N    : tile width/height ratio (default: auto-detected)
 
 Pre-select:
     --pre-select "entry1\nentry2"      : pre-select labels at launch
     --pre-select-file FILE             : read pre-select labels from file
 
-Performance notes:
-  * Uses pyvips (libvips) when available — the same C library GdkPixbuf wraps.
-    Falls back to PIL with draft()/reduce()/BILINEAR + reducing_gap.
-  * Persistent on-disk WebP thumbnail cache under ~/.cache/sel_img_thumbs.
-  * Decode workers are threads; libvips/libjpeg-turbo release the GIL inside
-    their C decode+resize paths, so this scales well up to cpu_count workers.
+Performance design (see comments in the module):
+  * Decode target sizes are quantised to SIZE_BUCKETS so that the list view,
+    the gallery view, and small window resizes all reuse the same decode.
+  * The on-disk WebP cache is OFF by default (opt in with SEL_IMG_DISK_CACHE=1);
+    the analysis showed its synchronous writes dominated the worker threads.
+  * One in-memory LRU of ready QPixmaps, keyed by (path, bucket).
+  * A priority decode pool dedups by (path, bucket): a prefetch and a later
+    real request for the same file share a single decode.
+  * Worker threads never touch QPixmap/QImage; conversion happens on the GUI
+    thread via a Qt queued signal.
 """
 
 import sys
 import os
-import hashlib
 import argparse
 import threading
 import queue
+import heapq
+import hashlib
+from collections import OrderedDict
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -67,7 +72,7 @@ except Exception:
     HAS_VIPS = False
 
 try:
-    import numpy as np  # noqa: F401
+    import numpy as _np  # noqa: F401
     HAS_NUMPY = True
 except Exception:
     HAS_NUMPY = False
@@ -75,9 +80,11 @@ except Exception:
 from PIL import Image, ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+
 # ─── Configuration ───────────────────────────────────────────────────────────
 
-SUPPORTED_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.tiff', '.tif'}
+SUPPORTED_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp',
+                  '.tiff', '.tif', '.avif', '.heic', '.heif', '.jxl'}
 
 THEME = {
     "bg_primary":   "#2e3440",
@@ -92,39 +99,65 @@ THEME = {
     "hover_border": "#4c566a",
 }
 
-CACHE_SIZE = 800
-PRELOAD_AHEAD = 3
+# ── Thumbnail size buckets ───────────────────────────────────────────────────
+# Every decode request is snapped up to one of these, so the list view, the
+# gallery view, and small window resizes all hit the same cache entry.
+SIZE_BUCKETS = (128, 192, 256, 384, 512, 768, 1024, 1536, 2048)
 
+
+def _bucket_for(w, h):
+    m = max(int(w), int(h))
+    for b in SIZE_BUCKETS:
+        if m <= b:
+            return b
+    return SIZE_BUCKETS[-1]
+
+
+# ── In-memory caches ─────────────────────────────────────────────────────────
+QPIXMAP_CACHE_MAX = 384       # ready-to-paint thumbnails
+ORIG_SIZE_CACHE_MAX = 8192    # (path -> (w, h)) header cache
+
+# ── Decode pool ──────────────────────────────────────────────────────────────
 DECODE_WORKERS = max(2, min(8, os.cpu_count() or 4))
 
-DISK_CACHE_ENABLED = True
-CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", "~/.cache")).expanduser() / "sel_img_thumbs"
+# ── Prefetch ─────────────────────────────────────────────────────────────────
+PRELOAD_AHEAD = 2
+
+# ── Optional on-disk cache ───────────────────────────────────────────────────
+# Off by default: the synchronous WebP encode inside the decode worker was the
+# main reason the previous version felt slower than the Tk viewer.
+DISK_CACHE_ENABLED = os.environ.get("SEL_IMG_DISK_CACHE", "0") == "1"
+CACHE_DIR = (Path(os.environ.get("XDG_CACHE_HOME", "~/.cache")).expanduser()
+             / "sel_img_thumbs")
 CACHE_WEBP_QUALITY = 82
 
-# Gallery geometry — tile size scales with viewport size at runtime.
-# Tiles are NOT forced square: width and height are derived independently
-# from the (auto-detected or user-supplied) target aspect ratio.
-GALLERY_TILE_MIN = 180           # bounds on the tile's *long* dimension
+# ── Gallery geometry ─────────────────────────────────────────────────────────
+GALLERY_TILE_MIN = 180
 GALLERY_TILE_MAX = 420
-GALLERY_TARGET_ROWS = 3.5        # approx rows we want visible in the viewport
-GALLERY_CAPTION_RATIO = 0.16     # caption height as fraction of tile height
+GALLERY_TARGET_ROWS = 3.5
+GALLERY_CAPTION_RATIO = 0.16
 GALLERY_CAPTION_MIN = 22
-GALLERY_PAD_RATIO = 0.045        # inter-tile pad as fraction of tile height
+GALLERY_PAD_RATIO = 0.045
 GALLERY_PAD_MIN = 6
-GALLERY_SIZE_QUANTUM = 8         # quantize tile size to reduce rebuild churn
+GALLERY_SIZE_QUANTUM = 8
 GALLERY_OVERSCAN_ROWS = 2
 
-# Default tile aspect ratio (width / height) when the images give us no clue.
 GALLERY_ASPECT_DEFAULT = 16.0 / 9.0
 GALLERY_ASPECT_MIN = 0.4
 GALLERY_ASPECT_MAX = 3.0
-GALLERY_ASPECT_SAMPLE = 20       # how many leading items to sample
+GALLERY_ASPECT_SAMPLE = 20
 
 
-# ─── Decode helpers (module-level, run on worker threads) ────────────────────
+# ─── Decode helpers (run on worker threads) ──────────────────────────────────
 
-def _get_orig_size(path):
+def _read_orig_size(path):
     """Cheap header-only read. Does not decode pixel data."""
+    if HAS_VIPS:
+        try:
+            v = pyvips.Image.new_from_file(path)
+            return (int(v.width), int(v.height))
+        except Exception:
+            pass
     try:
         with Image.open(path) as img:
             return img.size
@@ -132,128 +165,218 @@ def _get_orig_size(path):
         return (0, 0)
 
 
-def _disk_cache_path(path, w, h):
-    try:
-        st = os.stat(path)
-    except OSError:
-        return None
+def _disk_cache_path(path, mtime_ns, bucket):
     key = hashlib.sha1(
-        f"{path}|{st.st_mtime_ns}|{st.st_size}|{w}x{h}".encode("utf-8")
+        f"{path}|{mtime_ns}|{bucket}".encode("utf-8")
     ).hexdigest()
     return CACHE_DIR / key[:2] / (key + ".webp")
 
 
-def _decode_image(path, max_w, max_h):
-    """Decode/thumbnail `path` to fit inside (max_w, max_h).
+def _decode_image(path, bucket):
+    """Decode/thumbnail `path` to fit inside (bucket, bucket).
 
     Returns (PIL.Image or None, (orig_w, orig_h)).
-    Uses the on-disk WebP cache when possible.
     """
-    orig_size = _get_orig_size(path)
+    orig_size = (0, 0)
+    cache_file = None
 
-    cache_file = _disk_cache_path(path, max_w, max_h) if DISK_CACHE_ENABLED else None
-
-    # ── 1) On-disk cache hit ──
-    if cache_file is not None and cache_file.exists():
+    if DISK_CACHE_ENABLED:
         try:
-            with Image.open(cache_file) as img:
-                img.load()
-                return img, orig_size
-        except Exception:
+            st = os.stat(path)
+            cache_file = _disk_cache_path(path, st.st_mtime_ns, bucket)
+        except OSError:
+            cache_file = None
+        if cache_file is not None and cache_file.exists():
             try:
-                cache_file.unlink()
-            except OSError:
-                pass
+                with Image.open(cache_file) as img:
+                    img.load()
+                    pil = img.copy()
+                orig_size = _read_orig_size(path)
+                return pil, orig_size
+            except Exception:
+                try:
+                    cache_file.unlink()
+                except OSError:
+                    pass
 
     pil_img = None
 
-    # ── 2) pyvips fast path ──
+    # ── pyvips fast path (shrink-on-load) ──
     if HAS_VIPS and HAS_NUMPY:
         try:
-            v = pyvips.Image.thumbnail(path, max_w, height=max_h, size="down")
-            arr = v.numpy()
-            if v.bands == 4:
-                pil_img = Image.fromarray(arr.copy(), "RGBA")
-            elif v.bands == 3:
-                pil_img = Image.fromarray(arr.copy(), "RGB")
+            v = pyvips.Image.new_from_file(path)
+            orig_size = (int(v.width), int(v.height))
+            thumb = pyvips.Image.thumbnail(path, bucket, height=bucket,
+                                           size="down")
+            arr = thumb.numpy()
+            if not arr.flags["C_CONTIGUOUS"]:
+                arr = _np.ascontiguousarray(arr)
+            if arr.ndim == 2:
+                pil_img = Image.fromarray(arr, "L")
             else:
-                pil_img = Image.fromarray(arr.copy()).convert("RGB")
+                b = arr.shape[2]
+                if b == 3:
+                    pil_img = Image.fromarray(arr, "RGB")
+                elif b == 4:
+                    pil_img = Image.fromarray(arr, "RGBA")
+                elif b == 2:
+                    pil_img = Image.fromarray(arr, "LA")
+                elif b == 1:
+                    pil_img = Image.fromarray(arr[:, :, 0], "L")
+                else:
+                    pil_img = Image.fromarray(arr[:, :, :4], "RGBA")
         except Exception:
             pil_img = None
 
-    # ── 3) PIL fallback ──
+    # ── PIL fallback ──
     if pil_img is None:
         try:
             with Image.open(path) as img:
-                # Ask libjpeg for a pre-scaled decode (huge win on big JPEGs).
+                orig_size = img.size
                 if img.format == "JPEG":
-                    img.draft("RGB", (max_w, max_h))
-
-                # Box-filter pre-shrink for very large images (cheap O(n)).
-                if img.width > max_w * 4 or img.height > max_h * 4:
-                    factor = max(1, min(img.width // (max_w * 2),
-                                        img.height // (max_h * 2)))
+                    img.draft("RGB", (bucket, bucket))
+                if img.width > bucket * 4 or img.height > bucket * 4:
+                    factor = max(1, min(img.width // (bucket * 2),
+                                        img.height // (bucket * 2)))
                     if factor > 1:
                         img = img.reduce(factor)
-
-                # BILINEAR + reducing_gap is 2-3x faster than LANCZOS and
-                # visually identical at thumbnail sizes.
-                img.thumbnail((max_w, max_h),
+                img.thumbnail((bucket, bucket),
                               Image.Resampling.BILINEAR,
                               reducing_gap=2.0)
-
-                if img.mode not in ("RGB", "RGBA"):
-                    img = img.convert("RGBA" if "A" in img.mode else "RGB")
-
+                if img.mode not in ("RGB", "RGBA", "L", "LA"):
+                    img = img.convert("RGB")
                 img.load()
-                pil_img = img
+                pil_img = img.copy()
         except Exception:
             pil_img = None
 
-    # ── 4) Populate the on-disk cache ──
+    # ── Populate the on-disk cache (only when explicitly enabled) ──
     if pil_img is not None and cache_file is not None:
-        tmp = None
         try:
             cache_file.parent.mkdir(parents=True, exist_ok=True)
             tmp = cache_file.with_name(cache_file.name + ".tmp")
             pil_img.save(tmp, "WEBP", quality=CACHE_WEBP_QUALITY, method=0)
             os.replace(tmp, cache_file)
         except Exception:
-            if tmp is not None:
-                try:
+            try:
+                if tmp is not None:
                     tmp.unlink()
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
     return pil_img, orig_size
 
 
 def _pil_to_qpixmap(pil_img):
-    """Convert a PIL image to a QPixmap. Must be called on the GUI thread."""
+    """Convert a PIL image to a QPixmap.
+
+    Must be called on the GUI thread.  Does exactly one copy into a
+    QPixmap (the QImage wraps the temporary bytes and is immediately
+    blitted into the QPixmap, then discarded).
+    """
     if pil_img is None:
         return None
     try:
-        if pil_img.mode not in ("RGB", "RGBA"):
-            pil_img = pil_img.convert("RGBA" if "A" in pil_img.mode else "RGB")
+        mode = pil_img.mode
         w, h = pil_img.size
-        if pil_img.mode == "RGBA":
+        if mode == "RGBA":
             data = pil_img.tobytes("raw", "RGBA")
             fmt = QImage.Format_RGBA8888
             bpl = w * 4
-        else:
+        elif mode == "RGB":
             data = pil_img.tobytes("raw", "RGB")
             fmt = QImage.Format_RGB888
             bpl = w * 3
+        elif mode == "L":
+            data = pil_img.tobytes("raw", "L")
+            fmt = QImage.Format_Grayscale8
+            bpl = w
+        else:
+            pil_img = pil_img.convert("RGBA")
+            w, h = pil_img.size
+            data = pil_img.tobytes("raw", "RGBA")
+            fmt = QImage.Format_RGBA8888
+            bpl = w * 4
         qimg = QImage(data, w, h, bpl, fmt)
-        return QPixmap.fromImage(qimg.copy())
+        return QPixmap.fromImage(qimg)
     except Exception:
         return None
 
 
-# ─── Bridge objects for cross-thread signalling ──────────────────────────────
+def _scaled_pixmap(pixmap, max_w, max_h):
+    """Downscale a pixmap to fit (max_w, max_h). Cheap on the GUI thread."""
+    if pixmap is None or pixmap.isNull():
+        return None
+    max_w = max(1, int(max_w))
+    max_h = max(1, int(max_h))
+    if pixmap.width() <= max_w and pixmap.height() <= max_h:
+        return pixmap
+    return pixmap.scaled(max_w, max_h, Qt.KeepAspectRatio,
+                         Qt.SmoothTransformation)
+
+
+# ─── Priority decode pool ────────────────────────────────────────────────────
+
+class _DecodePool:
+    """Fixed-size worker pool with a priority queue.
+
+    The pool only schedules work; it holds no per-job state.  The caller
+    is responsible for deduplicating (path, bucket) pairs before calling
+    `submit`.
+    """
+
+    def __init__(self, workers, on_result):
+        self._on_result = on_result
+        self._cv = threading.Condition()
+        self._heap = []
+        self._seq = 0
+        self._stop = False
+        self._threads = []
+        for _ in range(max(1, workers)):
+            t = threading.Thread(target=self._run, daemon=True,
+                                 name="selimgqt-decode")
+            t.start()
+            self._threads.append(t)
+
+    def submit(self, priority, path, bucket):
+        with self._cv:
+            if self._stop:
+                return
+            self._seq += 1
+            heapq.heappush(self._heap, (int(priority), self._seq, path, bucket))
+            self._cv.notify()
+
+    def stop(self):
+        with self._cv:
+            self._stop = True
+            self._cv.notify_all()
+
+    def _run(self):
+        while True:
+            with self._cv:
+                while not self._heap and not self._stop:
+                    self._cv.wait()
+                if self._stop and not self._heap:
+                    return
+                if not self._heap:
+                    continue
+                _prio, _seq, path, bucket = heapq.heappop(self._heap)
+            try:
+                pil_img, orig_size = _decode_image(path, bucket)
+                err = None
+            except Exception as e:
+                pil_img, orig_size, err = None, (0, 0), e
+            try:
+                self._on_result(path, bucket, pil_img, orig_size, err)
+            except Exception:
+                pass
+
+
+# ─── Cross-thread bridge (worker -> GUI thread) ──────────────────────────────
 
 class _DecodeBridge(QObject):
-    done = Signal(object, object, object, object)   # pil_img, token, orig_size, callback
+    # path, bucket, pil_img (or None), orig_size, err (or None)
+    done = Signal(str, int, object, object, object)
 
 
 class _ScanBridge(QObject):
@@ -263,9 +386,7 @@ class _ScanBridge(QObject):
 # ─── Custom list delegate ────────────────────────────────────────────────────
 
 class _ListItemDelegate(QStyledItemDelegate):
-    """Draws list rows with colours matching the Tk original: current row
-    uses the accent colour, pre-selected rows use the 'selected' colour,
-    everything else uses the secondary background."""
+    """Draws list rows with colours matching the Tk original."""
 
     def __init__(self, app):
         super().__init__()
@@ -408,7 +529,6 @@ class GalleryTile(QFrame):
             f"background-color: {THEME['bg_secondary']}; "
             f"color: {THEME['fg_text']}; font-size: 9px;"
         )
-        # Match the Tk behaviour: caption occupies a fixed slice of the tile.
         try:
             self.caption.setFixedHeight(max(1, int(app._tile_caption_h)))
         except Exception:
@@ -448,6 +568,7 @@ class GalleryTile(QFrame):
 
     # ── public API ──
     def set_photo(self, pixmap):
+        """Install a pixmap already scaled to the tile's thumbnail area."""
         self._pixmap = pixmap
         if pixmap is not None and not pixmap.isNull():
             self.thumb.setPixmap(pixmap)
@@ -520,8 +641,10 @@ class ImageSelector(QMainWindow):
                  gallery_tile_size=None, gallery_aspect=None):
         super().__init__()
 
-        self._gallery_rows_opt = gallery_rows if gallery_rows and gallery_rows > 0 else None
-        self._gallery_cols_opt = gallery_cols if gallery_cols and gallery_cols > 0 else None
+        self._gallery_rows_opt = (gallery_rows
+                                  if gallery_rows and gallery_rows > 0 else None)
+        self._gallery_cols_opt = (gallery_cols
+                                  if gallery_cols and gallery_cols > 0 else None)
         self._gallery_tile_opt = (gallery_tile_size
                                   if gallery_tile_size and gallery_tile_size > 0
                                   else None)
@@ -537,11 +660,14 @@ class ImageSelector(QMainWindow):
             self.all_items = [(os.path.basename(p), p) for p in image_paths]
         else:
             if len(display_labels) != len(image_paths):
-                raise ValueError("display_labels and image_paths must have same length")
+                raise ValueError(
+                    "display_labels and image_paths must have same length")
             self.all_items = list(zip(display_labels, image_paths))
 
         self.filtered_items = self.all_items.copy()
-        self.path_to_abs_index = {path: idx for idx, (_, path) in enumerate(self.all_items)}
+        self.path_to_abs_index = {
+            path: idx for idx, (_, path) in enumerate(self.all_items)
+        }
 
         self._closing = False
         self._last_index = -1
@@ -559,7 +685,7 @@ class ImageSelector(QMainWindow):
         # View state
         self.view_mode = "list"
 
-        # Gallery metrics — recomputed from the viewport size.
+        # Gallery metrics
         self._tile_w = 240
         self._tile_h = 240
         self._tile_caption_h = 34
@@ -572,125 +698,107 @@ class ImageSelector(QMainWindow):
         self._pending_gallery_scroll = None
         self._gallery_gen = 0
 
-        # Decode infrastructure
-        self._decode_q = queue.Queue()
-        self._decode_tokens = {}
-        self._decode_token_lock = threading.Lock()
-        self._decode_token_counter = 0
-        self._decode_threads = []
-        self._decode_stop = threading.Event()
+        # ── In-memory caches (GUI thread only) ──
+        # (path, bucket) -> (QPixmap, (orig_w, orig_h))
+        self._pixmap_cache = OrderedDict()
+        # path -> (w, h) header cache
+        self._orig_size = OrderedDict()
 
+        # ── Decode pipeline ──
+        # (path, bucket) -> [callback, ...]  (waiters on the GUI thread)
+        self._decode_waiters = {}
         self._decode_bridge = _DecodeBridge()
-        self._decode_bridge.done.connect(self._on_decode_done, Qt.QueuedConnection)
+        self._decode_bridge.done.connect(self._on_decode_done,
+                                         Qt.QueuedConnection)
+        self._decode_pool = _DecodePool(DECODE_WORKERS,
+                                        self._decode_bridge.done.emit)
 
+        # ── Scan pipeline ──
         self._scan_bridge = _ScanBridge()
-        self._scan_bridge.file_found.connect(self._append_to_list, Qt.QueuedConnection)
-
-        self._pil_cache = {}
-        self._photo_cache = {}      # key=(path,w,h) -> (QPixmap, (orig_w, orig_h))
-        self._cache_lock = threading.Lock()
+        self._scan_bridge.file_found.connect(self._append_to_list,
+                                             Qt.QueuedConnection)
 
         if pre_select_labels:
             self._apply_pre_select(pre_select_labels)
 
         self._setup_window()
         self._build_ui()
-        self._start_decode_workers()
         self._populate_list()
         if self.filtered_items:
             self._select_and_show(pass_idx)
         self.input.setFocus()
 
-    # ── Decode pool ──────────────────────────────────────────────────────────
+    # ── Thumbnail request pipeline ───────────────────────────────────────────
 
-    def _start_decode_workers(self):
-        for _ in range(DECODE_WORKERS):
-            t = threading.Thread(target=self._decode_worker, daemon=True)
-            t.start()
-            self._decode_threads.append(t)
+    def _cache_pixmap(self, key, pixmap, orig_size):
+        self._pixmap_cache[key] = (pixmap, orig_size)
+        self._pixmap_cache.move_to_end(key)
+        while len(self._pixmap_cache) > QPIXMAP_CACHE_MAX:
+            self._pixmap_cache.popitem(last=False)
 
-    def _decode_worker(self):
-        while not self._decode_stop.is_set():
-            try:
-                job = self._decode_q.get(timeout=0.25)
-            except queue.Empty:
-                continue
-            if job is None:
-                break
-            path, max_w, max_h, token, callback = job
-            if self._closing or self._decode_stop.is_set():
-                continue
-            with self._decode_token_lock:
-                latest = self._decode_tokens.get(path)
-            if latest is not None and latest != token:
-                continue
+    def _cache_orig_size(self, path, size):
+        if not size or size == (0, 0):
+            return
+        self._orig_size[path] = size
+        self._orig_size.move_to_end(path)
+        while len(self._orig_size) > ORIG_SIZE_CACHE_MAX:
+            self._orig_size.popitem(last=False)
 
-            pil_img, orig_size = _decode_image(path, max_w, max_h)
+    def _request_thumbnail(self, path, max_w, max_h, callback, priority=1):
+        """Request a thumbnail decode at the bucket covering (max_w, max_h).
 
-            if self._closing or self._decode_stop.is_set():
-                continue
-            try:
-                self._decode_bridge.done.emit(pil_img, token, orig_size, callback)
-            except Exception:
-                pass
-
-    def _on_decode_done(self, pil_img, token, orig_size, callback):
+        `callback(pixmap_or_None, orig_size)` runs on the GUI thread.  It
+        may be invoked synchronously (cache hit) or later (decode done).
+        `priority`: 0 = current item, 1 = neighbour prefetch, 2 = gallery.
+        """
         if self._closing:
             return
-        try:
-            callback(pil_img, token, orig_size)
-        except Exception:
-            pass
+        bucket = _bucket_for(max_w, max_h)
+        key = (path, bucket)
 
-    def _request_decode(self, path, max_w, max_h, callback):
-        with self._decode_token_lock:
-            self._decode_token_counter += 1
-            token = self._decode_token_counter
-            self._decode_tokens[path] = token
-        self._decode_q.put((path, max_w, max_h, token, callback))
-        return token
+        # 1) Ready QPixmap
+        entry = self._pixmap_cache.get(key)
+        if entry is not None:
+            self._pixmap_cache.move_to_end(key)
+            callback(entry[0], entry[1])
+            return
 
-    # ── Thumbnail cache ──────────────────────────────────────────────────────
+        # 2) Already decoding — piggyback on the pending result.
+        waiters = self._decode_waiters.get(key)
+        if waiters is not None:
+            waiters.append(callback)
+            return
 
-    def _cache_get(self, path, w, h):
-        key = (path, w, h)
-        with self._cache_lock:
-            entry = self._photo_cache.get(key)
-            if entry is not None:
-                self._photo_cache.pop(key, None)
-                self._photo_cache[key] = entry
-            return entry
+        # 3) Fresh decode.
+        self._decode_waiters[key] = [callback]
+        self._decode_pool.submit(priority, path, bucket)
 
-    def _cache_put(self, path, w, h, entry):
-        key = (path, w, h)
-        with self._cache_lock:
-            self._photo_cache[key] = entry
-            while len(self._photo_cache) > CACHE_SIZE:
-                oldest = next(iter(self._photo_cache))
-                del self._photo_cache[oldest]
+    def _on_decode_done(self, path, bucket, pil_img, orig_size, err):
+        """GUI-thread handler for a completed decode."""
+        if self._closing:
+            return
+        key = (path, bucket)
+        waiters = self._decode_waiters.pop(key, [])
 
-    def _load_thumbnail_async(self, path, w, h, on_ready):
-        cached = self._cache_get(path, w, h)
-        if cached is not None:
-            pixmap, orig_size = cached
-            on_ready(pixmap, orig_size)
-            return pixmap
+        if pil_img is None:
+            for cb in waiters:
+                try:
+                    cb(None, orig_size)
+                except Exception:
+                    pass
+            return
 
-        def _done(pil_img, token, orig_size):
-            if self._closing:
-                return
-            if pil_img is None:
-                on_ready(None, orig_size)
-                return
-            pixmap = _pil_to_qpixmap(pil_img)
-            if pixmap is None:
-                on_ready(None, orig_size)
-                return
-            self._cache_put(path, w, h, (pixmap, orig_size))
-            on_ready(pixmap, orig_size)
+        self._cache_orig_size(path, orig_size)
 
-        self._request_decode(path, w, h, _done)
-        return None
+        pixmap = _pil_to_qpixmap(pil_img)
+        if pixmap is not None:
+            self._cache_pixmap(key, pixmap, orig_size)
+
+        for cb in waiters:
+            try:
+                cb(pixmap, orig_size)
+            except Exception:
+                pass
 
     # ── Pre-select ───────────────────────────────────────────────────────────
 
@@ -734,20 +842,16 @@ class ImageSelector(QMainWindow):
         root_layout.setContentsMargins(10, 10, 10, 10)
         root_layout.setSpacing(5)
 
-        # ── Stacked content ──
         self.stack = QStackedWidget()
 
         # --- List view page ---
         list_page = QWidget()
         list_page.setAttribute(Qt.WA_StyledBackground, True)
-        list_page.setStyleSheet(
-            f"background-color: {THEME['bg_primary']};"
-        )
+        list_page.setStyleSheet(f"background-color: {THEME['bg_primary']};")
         lh = QHBoxLayout(list_page)
         lh.setContentsMargins(0, 0, 0, 0)
         lh.setSpacing(10)
 
-        # Left: list
         self.left_frame = QFrame()
         self.left_frame.setFixedWidth(300)
         self.left_frame.setStyleSheet(
@@ -774,7 +878,6 @@ class ImageSelector(QMainWindow):
         self.listbox.setItemDelegate(_ListItemDelegate(self))
         lv.addWidget(self.listbox)
 
-        # Right: preview
         self.right_frame = QFrame()
         self.right_frame.setStyleSheet(
             f"background-color: {THEME['bg_primary']};"
@@ -874,7 +977,8 @@ class ImageSelector(QMainWindow):
         self.status_label = QLabel()
         self.status_label.setAlignment(Qt.AlignRight)
         self.status_label.setStyleSheet(
-            f"background-color: transparent; color: {THEME['fg_text']}; font-size: 10px;"
+            f"background-color: transparent; color: {THEME['fg_text']}; "
+            f"font-size: 10px;"
         )
         bv.addWidget(self.status_label)
 
@@ -909,12 +1013,6 @@ class ImageSelector(QMainWindow):
         self.input.textChanged.connect(self._on_search)
         self.listbox.currentRowChanged.connect(self._on_list_current_changed)
         self.listbox.itemDoubleClicked.connect(lambda _it: self._on_confirm())
-
-    # ── Refocus helpers ──────────────────────────────────────────────────────
-
-    def _refocus_entry(self, event=None):
-        self.input.setFocus()
-        return "break"
 
     # ── Navigation dispatcher ────────────────────────────────────────────────
 
@@ -966,8 +1064,6 @@ class ImageSelector(QMainWindow):
         self.listbox.addItem(item)
         self.path_to_abs_index[path] = len(self.all_items) - 1
 
-        # Re-sample the tile aspect ratio while we're still inside the sample
-        # window (only when the user hasn't pinned it via --gallery-aspect).
         if (self._gallery_aspect_opt is None
                 and len(self.all_items) <= GALLERY_ASPECT_SAMPLE):
             self._gallery_aspect_cache = None
@@ -1076,10 +1172,12 @@ class ImageSelector(QMainWindow):
 
         cw = max(self.image_container.width() - 20, 50)
         ch = max(self.image_container.height() - 20, 50)
-        self._load_thumbnail_async(
+        # Priority 0: the item the user is actually looking at.
+        self._request_thumbnail(
             path, cw, ch,
             lambda pix, orig, i=index, p=path:
-                self._on_preview_ready(i, p, pix, orig)
+                self._on_preview_ready(i, p, pix, orig),
+            priority=0,
         )
 
         self._preload_neighbors(index)
@@ -1089,18 +1187,24 @@ class ImageSelector(QMainWindow):
             return
         if self.view_mode != "list":
             return
+
         if pixmap is None or pixmap.isNull():
             self.image_label.setPixmap(QPixmap())
             self.image_label.setText("Failed to load")
             self._base_status_text = "Error loading image"
         else:
-            w, h = orig_size
+            # Scale to the container; a no-op if the bucket already fits.
+            cw = max(self.image_container.width() - 20, 50)
+            ch = max(self.image_container.height() - 20, 50)
+            shown = _scaled_pixmap(pixmap, cw, ch)
+            self.image_label.setText("")
+            self.image_label.setPixmap(shown if shown is not None else pixmap)
+
+            w, h = orig_size if orig_size else (0, 0)
             try:
                 size_kb = os.path.getsize(path) / 1024
             except Exception:
                 size_kb = 0
-            self.image_label.setText("")
-            self.image_label.setPixmap(pixmap)
             self._base_status_text = (
                 f"{w}×{h}  |  {size_kb:.1f} KB  |  "
                 f"{index + 1} / {len(self.filtered_items)}"
@@ -1114,19 +1218,23 @@ class ImageSelector(QMainWindow):
             return
         cw = max(self.image_container.width() - 20, 50)
         ch = max(self.image_container.height() - 20, 50)
+        # ±2 neighbours — enough to make stepping feel instant without
+        # flooding the decode pool.
         for offset in range(-PRELOAD_AHEAD, PRELOAD_AHEAD + 1):
             if offset == 0:
                 continue
             idx = center_index + offset
             if 0 <= idx < len(self.filtered_items):
                 _, path = self.filtered_items[idx]
-                self._load_thumbnail_async(path, cw, ch,
-                                           lambda pix, orig: None)
+                self._request_thumbnail(path, cw, ch,
+                                        lambda pix, orig: None,
+                                        priority=1)
 
     def _on_resize_done(self):
         if self._closing:
             return
         if self._last_index >= 0 and self.filtered_items and self.view_mode == "list":
+            # Re-request; may be a cache hit if the bucket is unchanged.
             self._select_and_show(self._last_index, from_gallery=True)
 
     # ── Navigation (list view) ───────────────────────────────────────────────
@@ -1214,23 +1322,21 @@ class ImageSelector(QMainWindow):
         if self._closing:
             return
         self._closing = True
-        self._decode_stop.set()
         try:
-            while True:
-                self._decode_q.get_nowait()
-        except queue.Empty:
+            self._decode_pool.stop()
+        except Exception:
             pass
-        for _ in self._decode_threads:
-            try:
-                self._decode_q.put_nowait(None)
-            except Exception:
-                pass
         try:
             self._gallery_refresh_timer.stop()
         except Exception:
             pass
         try:
             self._resize_timer.stop()
+        except Exception:
+            pass
+        # Drop Qt references before teardown to avoid late paint calls.
+        try:
+            self._pixmap_cache.clear()
         except Exception:
             pass
 
@@ -1257,7 +1363,9 @@ class ImageSelector(QMainWindow):
                 pattern = "**/*" if recursive else "*"
                 files = p.glob(pattern)
                 if sort_time:
-                    files = sorted(files, key=lambda x: x.stat().st_mtime, reverse=True)
+                    files = sorted(files,
+                                   key=lambda x: x.stat().st_mtime,
+                                   reverse=True)
                 else:
                     files = sorted(files)
                 for f in files:
@@ -1269,7 +1377,8 @@ class ImageSelector(QMainWindow):
                             self._scan_bridge.file_found.emit(str(f))
                         except Exception:
                             pass
-            elif p.is_file() and p.suffix.lower() in SUPPORTED_EXTS and str(p) not in seen:
+            elif (p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
+                  and str(p) not in seen):
                 seen.add(str(p))
                 try:
                     self._scan_bridge.file_found.emit(str(p))
@@ -1326,12 +1435,7 @@ class ImageSelector(QMainWindow):
     # ── Tile aspect ratio ────────────────────────────────────────────────────
 
     def _get_gallery_aspect(self):
-        """Return the tile aspect ratio (width / height).
-
-        Honours --gallery-aspect; otherwise samples the first few images
-        and takes the median ratio so 16:9 screenshots don't waste space
-        in square tiles. Result is cached.
-        """
+        """Return the tile aspect ratio (width / height)."""
         if self._gallery_aspect_cache is not None:
             return self._gallery_aspect_cache
 
@@ -1341,7 +1445,11 @@ class ImageSelector(QMainWindow):
         else:
             ratios = []
             for _label, path in self.all_items[:GALLERY_ASPECT_SAMPLE]:
-                w, h = _get_orig_size(path)
+                sz = self._orig_size.get(path)
+                if sz is None:
+                    sz = _read_orig_size(path)
+                    self._cache_orig_size(path, sz)
+                w, h = sz
                 if w > 0 and h > 0:
                     ratios.append(w / h)
             if ratios:
@@ -1358,12 +1466,6 @@ class ImageSelector(QMainWindow):
     # ── Tile metrics ─────────────────────────────────────────────────────────
 
     def _compute_tile_metrics(self):
-        """Return (tile_w, tile_h, caption_h, pad).
-
-        Tiles are sized to match `aspect` (not forced square). The target
-        number of visible rows/columns determines the tile's dimensions
-        along each axis independently.
-        """
         cw = self.gallery_canvas.viewport().width()
         ch = self.gallery_canvas.viewport().height()
         if cw <= 1 or ch <= 1:
@@ -1375,7 +1477,6 @@ class ImageSelector(QMainWindow):
         aspect = self._get_gallery_aspect()
 
         if self._gallery_tile_opt is not None:
-            # Treat the option as a bound on the tile's long side.
             long_side = float(self._gallery_tile_opt)
             if aspect >= 1.0:
                 base_w = long_side
@@ -1385,7 +1486,6 @@ class ImageSelector(QMainWindow):
                 base_w = long_side * aspect
         else:
             rows = self._gallery_rows_opt or GALLERY_TARGET_ROWS
-            # Approximate per-row vertical cost: tile_h * (1 + caption + pad)
             denom_v = 1.0 + GALLERY_CAPTION_RATIO + GALLERY_PAD_RATIO
             tile_h_from_rows = (ch / float(rows)) / denom_v
             tile_w_from_rows = tile_h_from_rows * aspect
@@ -1404,7 +1504,6 @@ class ImageSelector(QMainWindow):
         tile_w = max(q, tile_w)
         tile_h = max(q, tile_h)
 
-        # Clamp the long side to [MIN, MAX], preserving aspect.
         long_side = max(tile_w, tile_h)
         if long_side < GALLERY_TILE_MIN:
             scale = GALLERY_TILE_MIN / float(long_side)
@@ -1441,13 +1540,12 @@ class ImageSelector(QMainWindow):
             return
 
         if self._update_tile_metrics():
-            # Tile size changed — recycle everything so tiles pick up new geometry.
             for tile in self._gallery_tiles.values():
                 tile.setParent(None)
                 tile.deleteLater()
             self._gallery_tiles.clear()
             self._gallery_gen += 1
-            self._gallery_cols = 0  # force column recompute
+            self._gallery_cols = 0
 
         if not self.filtered_items:
             for tile in self._gallery_tiles.values():
@@ -1524,23 +1622,29 @@ class ImageSelector(QMainWindow):
             tile.set_current(idx == self._last_index)
 
             if needs_thumb:
-                # Pass the expected path so a late callback from a previous
-                # item at this grid slot can't paint the wrong thumbnail.
-                self._load_thumbnail_async(
+                # Priority 2: gallery tiles are visible but lower urgency than
+                # the primary list-view preview.
+                self._request_thumbnail(
                     path, tw, th,
-                    lambda pix, orig, i=idx, p=path, g=self._gallery_gen:
-                        self._on_gallery_thumb_ready(i, p, pix, g)
+                    lambda pix, orig, i=idx, p=path, g=self._gallery_gen,
+                           _tw=tw, _th=th:
+                        self._on_gallery_thumb_ready(i, p, pix, g, _tw, _th),
+                    priority=2,
                 )
 
         self._gallery_built = True
 
-    def _on_gallery_thumb_ready(self, index, expected_path, pixmap, gen):
+    def _on_gallery_thumb_ready(self, index, expected_path, pixmap, gen, tw, th):
         if self._closing or gen != self._gallery_gen:
             return
         tile = self._gallery_tiles.get(index)
         if tile is None or tile.path != expected_path:
             return
-        tile.set_photo(pixmap)
+        if pixmap is None or pixmap.isNull():
+            tile.set_photo(None)
+            return
+        scaled = _scaled_pixmap(pixmap, tw, th)
+        tile.set_photo(scaled if scaled is not None else pixmap)
 
     def _update_gallery_selection(self, current_index):
         for idx, tile in self._gallery_tiles.items():
@@ -1557,11 +1661,6 @@ class ImageSelector(QMainWindow):
         self._schedule_gallery_refresh(immediate=True)
 
     def _apply_gallery_scroll(self, index):
-        """Move the canvas so that item `index` is fully inside the viewport.
-
-        Must be called only from `_refresh_gallery`, after the scrollregion
-        and gallery_inner geometry have been set for the current column count.
-        """
         cols = max(self._gallery_cols, 1)
         row = index // cols
         row_h = self._tile_h + self._tile_caption_h + self._tile_pad
@@ -1584,6 +1683,7 @@ class ImageSelector(QMainWindow):
         vbar.setValue(new_top)
 
     # ── Gallery navigation ──
+
     def _gallery_cols_count(self):
         return max(1, self._gallery_cols)
 
@@ -1634,14 +1734,17 @@ def collect_images(paths, recursive=False, sort_time=False):
             pattern = "**/*" if recursive else "*"
             files = p.glob(pattern)
             if sort_time:
-                files = sorted(files, key=lambda x: x.stat().st_mtime, reverse=True)
+                files = sorted(files,
+                               key=lambda x: x.stat().st_mtime,
+                               reverse=True)
             else:
                 files = sorted(files)
             for f in files:
                 if f.suffix.lower() in SUPPORTED_EXTS and f not in seen:
                     images.append(str(f))
                     seen.add(f)
-        elif p.is_file() and p.suffix.lower() in SUPPORTED_EXTS and str(p) not in seen:
+        elif (p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
+              and str(p) not in seen):
             images.append(str(p))
             seen.add(str(p))
     return images
@@ -1737,7 +1840,10 @@ def main():
     args = parse_args()
     pre_select_labels = read_pre_select(args)
     custom_title = args.custom_title or ""
-    pass_idx = int(args.pass_idx) if args.pass_idx else 0
+    try:
+        pass_idx = int(args.pass_idx) if args.pass_idx else 0
+    except (TypeError, ValueError):
+        pass_idx = 0
     idx_write_path = args.idx_write_path or ""
 
     qapp = QApplication(sys.argv)
