@@ -30,9 +30,9 @@ WM_SETUP_DIR = Path(os.path.expanduser(os.getenv("WM_SETUP_DIR", "")))
 # ---------------------------------------------------------------------------
 
 def run(*args, check=True):
-    try :
+    try:
         return subprocess.run(args, check=check)
-    except :
+    except Exception:
         pass
 
 
@@ -114,15 +114,13 @@ def change_background(selType="random"):
 
     current = get_current_image()
 
-    if selType=='random' :
+    if selType == "random":
         selected = random.choice(images)
-    else :
+    else:
         selected = subprocess.check_output(
-                ["sel_img",
-                 "--gallery"
-                 ] + images,
-                text=True
-                ).rstrip()
+            ["sel_img", "--gallery"] + images,
+            text=True
+        ).rstrip()
 
     while len(images) > 1 and str(selected) == current:
         selected = random.choice(images)
@@ -160,23 +158,36 @@ def pick_set():
         )
         return None
 
-    bgbackupsdir = Path.home() / "Pictures" / "bg-backups" 
-    with open("/dev/shm/themesettler_change_theme_entries",'w') as FILE :
+    bgbackupsdir = Path.home() / "Pictures" / "bg-backups"
+
+    with open("/dev/shm/themesettler_change_theme_entries", "w") as FILE:
         FILE.write("\n".join(entries))
 
-    with open("/dev/shm/themesettler_change_theme_images",'w') as FILE :
-        FILE.write("\n".join([ str( bgbackupsdir / i / random.choice(os.listdir(bgbackupsdir / i)) ) for i in entries ]))
+    with open("/dev/shm/themesettler_change_theme_images", "w") as FILE:
+        FILE.write(
+            "\n".join(
+                [
+                    str(
+                        bgbackupsdir
+                        / i
+                        / random.choice(os.listdir(bgbackupsdir / i))
+                    )
+                    for i in entries
+                ]
+            )
+        )
 
     selection = subprocess.check_output(
-        ["sel_img",
-         '--dmenu-mode',
-         "--list-file",
-         "/dev/shm/themesettler_change_theme_entries",
-         "--image-file",
-         "/dev/shm/themesettler_change_theme_images",
-         '--return-label',
-         '--gallery'
-            ],
+        [
+            "sel_img",
+            "--dmenu-mode",
+            "--list-file",
+            "/dev/shm/themesettler_change_theme_entries",
+            "--image-file",
+            "/dev/shm/themesettler_change_theme_images",
+            "--return-label",
+            "--gallery",
+        ],
         text=True,
     ).rstrip()
 
@@ -198,32 +209,36 @@ def change_theme():
         )
         sys.exit(1)
 
-    BACKGROUNDS_DIR.mkdir(parents=True, exist_ok=True)
+    # Check that the theme actually has at least one usable image before
+    # replacing the current Backgrounds path.
+    source_images = [
+        f for f in source_dir.rglob("*")
+        if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
+    ]
 
-    # Remove existing background files.
-    for f in BACKGROUNDS_DIR.iterdir():
-        if f.is_file():
-            f.unlink()
-
-    # Copy the new set.
-    copied = 0
-
-    for f in source_dir.iterdir():
-        if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS:
-            shutil.copy2(f, BACKGROUNDS_DIR / f.name)
-            copied += 1
-
-    if copied == 0:
+    if not source_images:
         print(
             f"Warning: no images found in '{source_dir}'.",
             file=sys.stderr,
         )
         return
 
-    print(
-        f"Copied {copied} image(s) from '{selected}' "
-        f"→ {BACKGROUNDS_DIR}"
-    )
+    BACKGROUNDS_DIR.parent.mkdir(parents=True, exist_ok=True)
+
+    # Remove the old Backgrounds path. If it is a symlink, remove only the
+    # symlink so we do not delete files inside the theme directory it points to.
+    if BACKGROUNDS_DIR.is_symlink():
+        BACKGROUNDS_DIR.unlink()
+    elif BACKGROUNDS_DIR.exists():
+        if BACKGROUNDS_DIR.is_dir():
+            shutil.rmtree(BACKGROUNDS_DIR)
+        else:
+            BACKGROUNDS_DIR.unlink()
+
+    # Make ~/Pictures/Backgrounds point directly at the selected theme.
+    BACKGROUNDS_DIR.symlink_to(source_dir, target_is_directory=True)
+
+    print(f"Linked {BACKGROUNDS_DIR} → {source_dir}")
 
     # Pick a wallpaper from the newly selected theme.
     change_background()
