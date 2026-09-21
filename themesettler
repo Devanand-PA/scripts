@@ -30,7 +30,10 @@ WM_SETUP_DIR = Path(os.path.expanduser(os.getenv("WM_SETUP_DIR", "")))
 # ---------------------------------------------------------------------------
 
 def run(*args, check=True):
-    return subprocess.run(args, check=check)
+    try :
+        return subprocess.run(args, check=check)
+    except :
+        pass
 
 
 def find_images():
@@ -148,14 +151,26 @@ def pick_set():
         )
         return None
 
-    result = subprocess.run(
-        ["dmenu", "-l", "10", "-i"],
-        input="\n".join(entries),
-        capture_output=True,
-        text=True,
-    )
+    bgbackupsdir = Path.home() / "Pictures" / "bg-backups" 
+    with open("/dev/shm/themesettler_change_theme_entries",'w') as FILE :
+        FILE.write("\n".join(entries))
 
-    selection = result.stdout.strip()
+    with open("/dev/shm/themesettler_change_theme_images",'w') as FILE :
+        FILE.write("\n".join([ str( bgbackupsdir / i / random.choice(os.listdir(bgbackupsdir / i)) ) for i in entries ]))
+
+    selection = subprocess.check_output(
+        ["sel_img",
+         '--dmenu-mode',
+         "--list-file",
+         "/dev/shm/themesettler_change_theme_entries",
+         "--image-file",
+         "/dev/shm/themesettler_change_theme_images",
+         '--return-label',
+         '--gallery'
+            ],
+        text=True,
+    ).rstrip()
+
     return selection or None
 
 
