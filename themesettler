@@ -102,7 +102,7 @@ def set_wallpaper(image):
     WALLPAPER_STATE.write_text(str(image))
 
 
-def change_background():
+def change_background(selType="random"):
     images = find_images()
 
     if not images:
@@ -113,7 +113,16 @@ def change_background():
         sys.exit(1)
 
     current = get_current_image()
-    selected = random.choice(images)
+
+    if selType=='random' :
+        selected = random.choice(images)
+    else :
+        selected = subprocess.check_output(
+                ["sel_img",
+                 "--gallery"
+                 ] + images,
+                text=True
+                ).rstrip()
 
     while len(images) > 1 and str(selected) == current:
         selected = random.choice(images)
@@ -424,6 +433,9 @@ def main():
 
     if command == "change-background":
         change_background()
+
+    elif command == "select-background":
+        change_background(selType="None")
 
     elif command == "change-theme":
         change_theme()
