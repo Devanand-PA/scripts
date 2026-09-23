@@ -1,6 +1,8 @@
 # scripts
 Miscellaneous Scripts that I use
 
+## NOTE : I am planning to drop sel_img and pysxiv in favour of a separate program called <a href="https://github.com/Devanand-PA/tkiv.py">tkiv.py</a> that does the job of both.
+
 ## sel_img and sel_img-qt
 
 <https://github.com/user-attachments/assets/cdf87cdf-883d-45b9-a79c-8ce9b50d0d75>
@@ -11,6 +13,8 @@ Image selector with gallery mode and list mode. They can display images that are
 ## pysxiv
 
 A python implementation of sxiv. Despite being written in a slower language , it actually loads images faster than sxiv because of asynchronous loading and libvips
+
+
 
 ## themesettler
 A bunch of scripts using sel_img to change themes, wallpapers, etc
