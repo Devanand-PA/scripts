@@ -3,7 +3,7 @@ Miscellaneous Scripts that I use
 
 ## sel_img and sel_img-qt
 
-https://github.com/user-attachments/assets/cdf87cdf-883d-45b9-a79c-8ce9b50d0d75
+<https://github.com/user-attachments/assets/cdf87cdf-883d-45b9-a79c-8ce9b50d0d75>
 
 
 Image selector with gallery mode and list mode. They can display images that are passed as arguments and can be used as a dmenu replacement for image files. Has asynchronous loading , optional libvips support, etc.
