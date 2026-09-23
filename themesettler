@@ -131,7 +131,8 @@ def change_background(selType="random"):
 
     # Wallpaper -> pywal -> everything else
     run("wal", "-n", "-s", "-i", str(selected))
-    walscript()
+    subprocess.run("kill -USR1 $(pidof dwm)",shell=True)
+    # walscript()
 
 
 # ---------------------------------------------------------------------------
