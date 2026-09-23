@@ -3,6 +3,7 @@ Miscellaneous Scripts that I use
 
 ## sel_img and sel_img-qt
 
+<video src="demos/sel_img-qt.mp4"></video>
 Image selector with gallery mode and list mode. They can display images that are passed as arguments and can be used as a dmenu replacement for image files. Has asynchronous loading , optional libvips support, etc.
 
 ## pysxiv
