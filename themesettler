@@ -118,7 +118,7 @@ def change_background(selType="random"):
         selected = random.choice(images)
     else:
         selected = subprocess.check_output(
-            ["sel_img", "--gallery"] + images,
+            ["tkiv.py","select", "--gallery","--gallery-rows","3"] + images,
             text=True
         ).rstrip()
 
@@ -179,8 +179,11 @@ def pick_set():
 
     selection = subprocess.check_output(
         [
-            "sel_img",
+            "tkiv.py",
+            "select",
             "--dmenu-mode",
+            "--gallery-rows",
+            "3",
             "--list-file",
             "/dev/shm/themesettler_change_theme_entries",
             "--image-file",
