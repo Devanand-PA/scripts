@@ -19,29 +19,17 @@ if "I" not in ARG :
         try :
             if ("U" in ARG) :
                 IMG=subprocess.check_output(
-<<<<<<< HEAD
-                        f"tkiv.py select --sort mtime --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/Screenshots"
-=======
-                        f"tkiv.py select --lazy --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $(find $HOME/Pictures/Screenshots -type d)"
->>>>>>> parent of cb1f28d (made vscrot faster)
+                        f"tkiv.py select --sort mtime --lazy --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/Screenshots"
                         ,shell=True,text=True).rstrip()
 
             elif ("N" in ARG) :
                 IMG=subprocess.check_output(
-<<<<<<< HEAD
-                        f"tkiv.py select --sort mtime --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/Named_Screenshots"
-=======
-                        f"tkiv.py select --lazy --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $(find $HOME/Pictures/Named_Screenshots -type d)"
->>>>>>> parent of cb1f28d (made vscrot faster)
+                        f"tkiv.py select --sort mtime --lazy --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/Named_Screenshots"
                         ,shell=True,text=True).rstrip()
 
             if not IMG :
                 IMG = subprocess.check_output(
-<<<<<<< HEAD
-                        f"tkiv.py select --sort mtime --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/*Screenshots"
-=======
-                        f"tkiv.py select --lazy --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $(find $HOME/Pictures/*Screenshots -type d)"
->>>>>>> parent of cb1f28d (made vscrot faster)
+                        f"tkiv.py select --sort mtime --lazy --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/*Screenshots"
                         ,shell=True,text=True).rstrip()
 
         except subprocess.CalledProcessError as e:
@@ -57,4 +45,4 @@ if "I" not in ARG :
 
 else :
             subprocess.run(
-                    f"tkiv.py img --floating-window --lazy --gallery -t $(find $HOME/Pictures/*Screenshots -type d)" ,shell=True,text=True)
+                    f"tkiv.py img --floating-window --lazy --gallery -t $HOME/Pictures/*Screenshots ,shell=True,text=True)
