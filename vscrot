@@ -18,17 +18,17 @@ if "I" not in ARG :
         try :
             if ("U" in ARG) :
                 IMG=subprocess.check_output(
-                        f"tkiv.py select --lazy --sort mtime --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/Screenshots"
+                        f"tkiv.py select --sort mtime --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/Screenshots"
                         ,shell=True,text=True).rstrip()
 
             elif ("N" in ARG) :
                 IMG=subprocess.check_output(
-                        f"tkiv.py select --lazy --sort mtime --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/Named_Screenshots"
+                        f"tkiv.py select --sort mtime --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/Named_Screenshots"
                         ,shell=True,text=True).rstrip()
 
             if not IMG :
                 IMG = subprocess.check_output(
-                        f"tkiv.py select --lazy --sort mtime --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/*Screenshots"
+                        f"tkiv.py select --sort mtime --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/*Screenshots"
                         ,shell=True,text=True).rstrip()
 
         except subprocess.CalledProcessError as e:
