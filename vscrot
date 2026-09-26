@@ -19,8 +19,7 @@ if "I" not in ARG :
         try :
             if ("U" in ARG) :
                 IMG=subprocess.check_output(
-                        f"tkiv.py select --sort mtime --lazy --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/Screenshots"
-                        ,shell=True,text=True).rstrip()
+                        f"tkiv.py select --sort mtime --lazy --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/Screenshots",shell=True,text=True).rstrip()
 
             elif ("N" in ARG) :
                 IMG=subprocess.check_output(
@@ -45,4 +44,4 @@ if "I" not in ARG :
 
 else :
             subprocess.run(
-                    f"tkiv.py img --floating-window --lazy --gallery -t $HOME/Pictures/*Screenshots ,shell=True,text=True)
+                    f"tkiv.py img --floating-window --lazy --gallery -t $HOME/Pictures/*Screenshots" ,shell=True,text=True)
