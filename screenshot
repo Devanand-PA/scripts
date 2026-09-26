@@ -3,6 +3,36 @@ import sys
 import os
 import subprocess
 import datetime
+UTILITIES = ['maim','scrot']
+
+def build_dict(FILENAME) :
+    return {
+    "scrot" : {
+        "clipboard" : 'scrot --select -F - | xclip -t image/png -sel clip',
+        "fullscreen" : ["scrot",FILENAME],
+        "named" : ["scrot", "--select", FILENAME]
+        },
+        
+    "maim" : {
+        "clipboard" : 'maim --select | xclip -t image/png -sel clip',
+        "fullscreen" : ["maim",FILENAME],
+        "named" : ["maim", "--select", FILENAME]
+        }
+
+        }
+
+
+
+def find_utility() :
+    util_list = list()
+    for i in UTILITIES :
+        check_exists = subprocess.run(['which',i])
+        if check_exists.returncode == 0 :
+            util_list.append(i)
+
+    return util_list
+
+
 
 def get_input(prompt):
     # Call dmenu with the prompt
@@ -10,6 +40,12 @@ def get_input(prompt):
     output = subprocess.check_output(dmenu_promt, shell=True, universal_newlines=True)
     # Return the output without the newline character
     return output.strip()
+
+
+preferred_utility = "" # For custom utility
+
+if not preferred_utility :
+    preferred_utility = find_utility()[0]
 
 DATE=datetime.datetime.now().strftime("%a %b %d %H:%M:%S %Z %Y")
 OPTIONS=""
@@ -27,15 +63,15 @@ if sys.argv[1] == "-s" :
     OPTIONS="named"
     FILENAME=test+".jpg"
 elif sys.argv[1] == "-x" :
-    OPTIONS="xclip"
+    OPTIONS="clipboard"
 elif sys.argv[1] == "-f" :
     FILENAME=os.path.expanduser("~/Pictures/Screenshots/"+DATE+".jpg")
 
 
-
+UTIL_DICT = build_dict(FILENAME)
 if OPTIONS=="named" :
-    subprocess.run(["scrot", "--select", FILENAME])
-elif OPTIONS == "xclip" :
-    subprocess.run('scrot --select -F - | xclip -t image/png -sel clip',shell=True)
+    subprocess.run(UTIL_DICT[preferred_utility]["named"])
+elif OPTIONS == "clipboard" :
+    subprocess.run(UTIL_DICT[preferred_utility]["clipboard"],shell=True)
 elif sys.argv[1] == "-f" :
-    subprocess.run(["scrot",FILENAME])
+    subprocess.run(UTIL_DICT[preferred_utility]["fullscreen"])
