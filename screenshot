@@ -1,0 +1,41 @@
+#!/bin/python3
+import sys
+import os
+import subprocess
+import datetime
+
+def get_input(prompt):
+    # Call dmenu with the prompt
+    dmenu_promt = f": | dmenu -p '{prompt}'"
+    output = subprocess.check_output(dmenu_promt, shell=True, universal_newlines=True)
+    # Return the output without the newline character
+    return output.strip()
+
+DATE=datetime.datetime.now().strftime("%a %b %d %H:%M:%S %Z %Y")
+OPTIONS=""
+FILENAME=""
+if sys.argv[1] == "-s" :
+    FILENAME = get_input("Enter Screenshot Name :") 
+    test=os.path.expanduser("~/Pictures/Named_Screenshots/"+FILENAME)
+    DIRNAME = os.path.dirname(test)
+    if not(os.path.isdir(DIRNAME)) :
+        subprocess.run(["mkdir","-p",DIRNAME])
+    i = 0
+    while os.path.basename(test) in os.listdir(os.path.dirname(test)) :
+        i +=1
+        test = FILENAME+"_"+str(i)+".jpg"
+    OPTIONS="named"
+    FILENAME=test+".jpg"
+elif sys.argv[1] == "-x" :
+    OPTIONS="xclip"
+elif sys.argv[1] == "-f" :
+    FILENAME=os.path.expanduser("~/Pictures/Screenshots/"+DATE+".jpg")
+
+
+
+if OPTIONS=="named" :
+    subprocess.run(["scrot", "--select", FILENAME])
+elif OPTIONS == "xclip" :
+    subprocess.run('scrot --select -F - | xclip -t image/png -sel clip',shell=True)
+elif sys.argv[1] == "-f" :
+    subprocess.run(["scrot",FILENAME])
