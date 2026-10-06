@@ -346,6 +346,9 @@ def walscript(alpha="0.75", light=False, update=None):
         selected_fg =  {wal_colors[0]}
         '''
 
+        if not(os.path.isdir(os.path.expanduser("~/.config/tkiv.py"))) :
+            os.mkdir(os.path.expanduser("~/.config/tkiv.py"))
+
         with open(os.path.expanduser("~/.config/tkiv.py/config"),'w') as FILE :
             FILE.write(custom_str)
 
