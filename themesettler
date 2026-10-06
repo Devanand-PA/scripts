@@ -102,7 +102,7 @@ def set_wallpaper(image):
     WALLPAPER_STATE.write_text(str(image))
 
 
-def change_background(selType="random"):
+def change_background_x11(selType="random"):
     images = find_images()
 
     if not images:
@@ -131,7 +131,7 @@ def change_background(selType="random"):
 
     # Wallpaper -> pywal -> everything else
     run("wal", "-n", "-s", "-i", str(selected))
-    # walscript()
+    walscript(update='tkiv.py')
 
 
 # ---------------------------------------------------------------------------
@@ -244,14 +244,19 @@ def change_theme():
     print(f"Linked {BACKGROUNDS_DIR} → {source_dir}")
 
     # Pick a wallpaper from the newly selected theme.
-    change_background()
+
+    if os.environ.get("XDG_SESSION_TYPE","").lower() == "x11" :
+        change_background_x11()
+    elif os.environ.get("XDG_SESSION_TYPE","").lower() == "wayland" :
+        if "HYPRLAND_INSTANCE_SIGNATURE" in os.environ :
+            select_hyprland_bg()
 
 
 # ---------------------------------------------------------------------------
 # WalScript
 # ---------------------------------------------------------------------------
 
-def walscript(alpha="0.75", light=False):
+def walscript(alpha="0.75", light=False, update=None):
     color_file = HOME / ".cache/wal/colors"
 
     with open(color_file) as f:
@@ -266,111 +271,172 @@ def walscript(alpha="0.75", light=False):
         title_fg = wal_colors[15]
         title_bg = "#000000"
 
+
     # -----------------------------------------------------------------------
     # dwm
     # -----------------------------------------------------------------------
+    def walscript_dwm() :
+        dwm_color = WM_SETUP_DIR / "dwm/colors.h"
 
-    dwm_color = WM_SETUP_DIR / "dwm/colors.h"
+        dwm_color.parent.mkdir(parents=True, exist_ok=True)
 
-    dwm_color.parent.mkdir(parents=True, exist_ok=True)
-
-    dwm_color.write_text(f'''
-static char normbordercolor[] = "#000000";
-static char normfgcolor[] = "{wal_colors[7]}";
-static char normbgcolor[] = "{wal_colors[0]}";
-static char selbordercolor[] = "{wal_colors[7]}";
-static char selbgcolor[] = "{wal_colors[2]}";
-static char selfgcolor[] = "{wal_colors[0]}";
-static char dwm_titlebg[] = "{title_bg}";
-static char dwm_titlefg[] = "{title_fg}";
-''')
+        dwm_color.write_text(f'''
+    static char normbordercolor[] = "#000000";
+    static char normfgcolor[] = "{wal_colors[7]}";
+    static char normbgcolor[] = "{wal_colors[0]}";
+    static char selbordercolor[] = "{wal_colors[7]}";
+    static char selbgcolor[] = "{wal_colors[2]}";
+    static char selfgcolor[] = "{wal_colors[0]}";
+    static char dwm_titlebg[] = "{title_bg}";
+    static char dwm_titlefg[] = "{title_fg}";
+    ''')
 
     # -----------------------------------------------------------------------
     # Zathura
     # -----------------------------------------------------------------------
 
-    zathura_colors = HOME / ".config/zathura/colors"
-    zathura_colors.parent.mkdir(parents=True, exist_ok=True)
+    def walscript_zathura() :
 
-    zathura_colors.write_text(f'''
-set recolor-darkcolor "{wal_colors[7]}"
-set recolor-lightcolor "{wal_colors[0]}"
-''')
+        zathura_colors = HOME / ".config/zathura/colors"
+        zathura_colors.parent.mkdir(parents=True, exist_ok=True)
+
+        zathura_colors.write_text(f'''
+    set recolor-darkcolor "{wal_colors[7]}"
+    set recolor-lightcolor "{wal_colors[0]}"
+    ''')
 
     # -----------------------------------------------------------------------
     # Tkinter
     # -----------------------------------------------------------------------
 
-    tkinter_colors = HOME / ".config/Tkinter/style.json"
-    tkinter_colors.parent.mkdir(parents=True, exist_ok=True)
+    def walscript_tkinter() :
+        tkinter_colors = HOME / ".config/Tkinter/style.json"
+        tkinter_colors.parent.mkdir(parents=True, exist_ok=True)
 
-    tkinter_style = {
-        "frame_style": {
-            "background": wal_colors[0],
-        },
-        "listbox_style": {
-            "background": wal_colors[0],
-            "foreground": wal_colors[7],
-            "font": ["JetBrains Mono", 12],
-        },
-        "label_style": {
-            "background": wal_colors[0],
-            "foreground": wal_colors[7],
-            "font": ["JetBrains Mono", 12],
-        },
-    }
+        tkinter_style = {
+            "frame_style": {
+                "background": wal_colors[0],
+            },
+            "listbox_style": {
+                "background": wal_colors[0],
+                "foreground": wal_colors[7],
+                "font": ["JetBrains Mono", 12],
+            },
+            "label_style": {
+                "background": wal_colors[0],
+                "foreground": wal_colors[7],
+                "font": ["JetBrains Mono", 12],
+            },
+        }
 
-    with open(tkinter_colors, "w") as f:
-        json.dump(tkinter_style, f)
+        with open(tkinter_colors, "w") as f:
+            json.dump(tkinter_style, f)
+
+
+    # -----------------------------------------------------------------------
+    # tkiv.py
+    # -----------------------------------------------------------------------
+
+    def walscript_tkiv_py() :
+        custom_str = f'''
+        [theme]
+        bg_primary =   {wal_colors[0]}
+        accent =       {wal_colors[6]}
+        selected_bg =  {wal_colors[1]}
+        selected_fg =  {wal_colors[0]}
+        '''
+
+        with open(os.path.expanduser("~/.config/tkiv.py/config"),'w') as FILE :
+            FILE.write(custom_str)
 
     # -----------------------------------------------------------------------
     # dmenu
     # -----------------------------------------------------------------------
 
-    dmenu_colors = WM_SETUP_DIR / "dmenu/colors.h"
-    dmenu_colors.parent.mkdir(parents=True, exist_ok=True)
+    def walscript_dmenu() :
+        dmenu_colors = WM_SETUP_DIR / "dmenu/colors.h"
+        dmenu_colors.parent.mkdir(parents=True, exist_ok=True)
 
-    dmenu_colors.write_text(f'''
-static const char *colors[SchemeLast][2] = {{
-    /*     fg         bg       */
-    [SchemeNorm] = {{ "{wal_colors[7]}", "{wal_colors[0]}" }},
-    [SchemeSel]  = {{ "{wal_colors[0]}", "{wal_colors[1]}" }},
-    [SchemeOut]  = {{ "{wal_colors[6]}", "{wal_colors[7]}" }},
-}};
-''')
+        dmenu_colors.write_text(f'''
+    static const char *colors[SchemeLast][2] = {{
+        /*     fg         bg       */
+        [SchemeNorm] = {{ "{wal_colors[7]}", "{wal_colors[0]}" }},
+        [SchemeSel]  = {{ "{wal_colors[0]}", "{wal_colors[1]}" }},
+        [SchemeOut]  = {{ "{wal_colors[6]}", "{wal_colors[7]}" }},
+    }};
+    ''')
 
     # -----------------------------------------------------------------------
     # suckless st
     # -----------------------------------------------------------------------
 
-    st_colors = WM_SETUP_DIR / "st/colors.h"
-    st_colors.parent.mkdir(parents=True, exist_ok=True)
+    def walscript_st() :
+        st_colors = WM_SETUP_DIR / "st/colors.h"
+        st_colors.parent.mkdir(parents=True, exist_ok=True)
 
-    colors = ",\n".join(
-        f'"{c}",'
-        for c in wal_colors[:16]
-    )
+        colors = ",\n".join(
+            f'"{c}",'
+            for c in wal_colors[:16]
+        )
 
-    st_colors.write_text(f'''
-static const char *colorname[] = {{
-{colors}
+        st_colors.write_text(f'''
+    static const char *colorname[] = {{
+    {colors}
 
-/* more colors can be added after 255 to use with DefaultXX */
-"#444444",
-"#555555",
-"{wal_colors[15]}",
-"{wal_colors[0]}",
-}};
+    /* more colors can be added after 255 to use with DefaultXX */
+    "#444444",
+    "#555555",
+    "{wal_colors[15]}",
+    "{wal_colors[0]}",
+    }};
 
-/* bg opacity */
-float alpha = {alpha};
-''')
+    /* bg opacity */
+    float alpha = {alpha};
+    ''')
+
+
+    # -----------------------------------------------------------------------
+    # Waybar
+    # -----------------------------------------------------------------------
+    def walscript_waybar() :
+        waybar_css = HOME / ".config/waybar/wal.css"
+        waybar_css.parent.mkdir(parents=True, exist_ok=True)
+
+        waybar_css.write_text(
+            "\n".join(
+                f"@define-color color{i} {wal_colors[i]};"
+                for i in range(16)
+            ) + "\n"
+        )
+
+        run("pkill", "waybar", check=False)
+        run("waybar")
+
+
+
 
     # -----------------------------------------------------------------------
     # wal.png
     # -----------------------------------------------------------------------
 
+    walscript_methods = {
+    "dwm" : walscript_dwm,
+    "zathura" : walscript_zathura,
+    "tkinter": walscript_tkinter,
+    "dmenu" : walscript_dmenu,
+    "st" : walscript_st,
+    "waybar" : walscript_waybar,
+    "tkiv.py"  : walscript_tkiv_py
+            }
+
+
     wal_image = HOME / ".cache/wal/wal"
+
+    if update is not None :
+        walscript_methods[update]()
+    else :
+        for i in walscript_methods :
+            walscript_methods[i]()
 
     if wal_image.exists():
         shutil.copy2(
@@ -378,29 +444,12 @@ float alpha = {alpha};
             HOME / ".cache/wal/wal.png",
         )
 
-    # -----------------------------------------------------------------------
-    # Waybar
-    # -----------------------------------------------------------------------
-
-    waybar_css = HOME / ".config/waybar/wal.css"
-    waybar_css.parent.mkdir(parents=True, exist_ok=True)
-
-    waybar_css.write_text(
-        "\n".join(
-            f"@define-color color{i} {wal_colors[i]};"
-            for i in range(16)
-        ) + "\n"
-    )
-
-    run("pkill", "waybar", check=False)
-    run("waybar")
-
 
 # ---------------------------------------------------------------------------
 # Hyprpaper random background
 # ---------------------------------------------------------------------------
 
-def select_bg():
+def select_hyprland_bg():
     run("pidof", "hyprpaper", check=False)
 
     if subprocess.run(
@@ -437,7 +486,7 @@ def usage():
     print("""Usage:
     themesettler change-background
     themesettler change-theme
-    themesettler select-bg
+    themesettler select-background
     themesettler walscript [--light] [--alpha VALUE]
 """)
 
@@ -450,16 +499,18 @@ def main():
     command = sys.argv[1]
 
     if command == "change-background":
-        change_background()
+        change_background_x11()
 
     elif command == "select-background":
-        change_background(selType="None")
+        if os.environ.get("XDG_SESSION_TYPE","").lower() == "x11" :
+            change_background_x11(selType="None")
+        elif os.environ.get("XDG_SESSION_TYPE","").lower() == "wayland" :
+            if "HYPRLAND_INSTANCE_SIGNATURE" in os.environ :
+                select_hyprland_bg()
 
     elif command == "change-theme":
         change_theme()
 
-    elif command == "select-bg":
-        select_bg()
 
     elif command == "walscript":
         alpha = "0.75"
