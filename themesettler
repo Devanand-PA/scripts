@@ -118,7 +118,7 @@ def change_background_x11(selType="random"):
         selected = random.choice(images)
     else:
         selected = subprocess.check_output(
-            ["tkiv","select", "--gallery","--gallery-rows","3"] + images,
+            ["egiv","select", "--gallery","--gallery-rows","3"] + images,
             text=True
         ).rstrip()
 
@@ -131,7 +131,7 @@ def change_background_x11(selType="random"):
 
     # Wallpaper -> pywal -> everything else
     run("wal", "-n", "-s", "-i", str(selected))
-    walscript(update='tkiv')
+    walscript(update='egiv')
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +179,7 @@ def pick_set():
 
     selection = subprocess.check_output(
         [
-            "tkiv",
+            "egiv",
             "select",
             "--dmenu-mode",
             "--gallery-rows",
@@ -334,10 +334,10 @@ def walscript(alpha="0.75", light=False, update=None):
 
 
     # -----------------------------------------------------------------------
-    # tkiv
+    # egiv
     # -----------------------------------------------------------------------
 
-    def walscript_tkiv() :
+    def walscript_egiv() :
         custom_str = f'''
         [theme]
         bg_primary =   {wal_colors[0]}
@@ -346,7 +346,10 @@ def walscript(alpha="0.75", light=False, update=None):
         selected_fg =  {wal_colors[0]}
         '''
 
-        with open(os.path.expanduser("~/.config/tkiv/config"),'w') as FILE :
+        if not(os.path.isdir(os.path.expanduser("~/.config/egiv"))) :
+            os.mkdir(os.path.expanduser("~/.config/egiv"))
+
+        with open(os.path.expanduser("~/.config/egiv/config"),'w') as FILE :
             FILE.write(custom_str)
 
     # -----------------------------------------------------------------------
@@ -426,7 +429,7 @@ def walscript(alpha="0.75", light=False, update=None):
     "dmenu" : walscript_dmenu,
     "st" : walscript_st,
     "waybar" : walscript_waybar,
-    "tkiv"  : walscript_tkiv
+    "egiv"  : walscript_egiv
             }
 
 

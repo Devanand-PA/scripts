@@ -12,38 +12,36 @@ with open(idxtemppath,'w') as FILE :
     FILE.write('0')
 
 if "I" not in ARG :
-    IMG = ""
-    with open(idxtemppath) as FILE :
-                curr_idx = FILE.read()
-    if ("U" in ARG) :
-        IMG=subprocess.check_output(
-            f"tkiv select --lazy --sort mtime --gallery -t $(find $HOME/Pictures/Screenshots -type d)"
-                        ,shell=True,text=True).rstrip()
-
-    elif ("N" in ARG) :
-        IMG=subprocess.check_output(
-            f"tkiv select --lazy --sort mtime --gallery -t $(find $HOME/Pictures/Named_Screenshots -type d)"
-                        ,shell=True,text=True).rstrip()
-
-    if not IMG :
-                IMG = subprocess.check_output(
-                        f"tkiv select --lazy --sort mtime --gallery -t $(find $HOME/Pictures/*Screenshots -type d)"
-                        ,shell=True,text=True).rstrip()
-
-
-
-
-    imgargs = []
-    if IMG :
-        print(IMG)
-
-else :
-
+    while  run :
+        with open(idxtemppath) as FILE :
+            curr_idx = FILE.read()
+        IMG = ""
         try :
-            subprocess.run(
-                    f"tkiv img --floating-window --lazy --sort mtime --gallery -t $(find $HOME/Pictures/*Screenshots -type d)" ,shell=True,text=True)
+            if ("U" in ARG) :
+                IMG=subprocess.check_output(
+                        f"egiv select --sort mtime  --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/Screenshots",shell=True,text=True).rstrip()
+
+            elif ("N" in ARG) :
+                IMG=subprocess.check_output(
+                        f"egiv select --sort mtime  --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/Named_Screenshots"
+                        ,shell=True,text=True).rstrip()
+
+            if not IMG :
+                IMG = subprocess.check_output(
+                        f"egiv select --sort mtime  --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/*Screenshots"
+                        ,shell=True,text=True).rstrip()
 
         except subprocess.CalledProcessError as e:
             exit_code = int(e.returncode)
             if exit_code == 1 :
                 sys.exit()
+
+
+
+        imgargs = []
+        if IMG :
+            print(IMG)
+
+else :
+            subprocess.run(
+                    f"egiv img --floating-window  --gallery -t $HOME/Pictures/*Screenshots" ,shell=True,text=True)
