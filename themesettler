@@ -118,7 +118,7 @@ def change_background_x11(selType="random"):
         selected = random.choice(images)
     else:
         selected = subprocess.check_output(
-            ["tkiv.py","select", "--gallery","--gallery-rows","3"] + images,
+            ["tkiv","select", "--gallery","--gallery-rows","3"] + images,
             text=True
         ).rstrip()
 
@@ -131,7 +131,7 @@ def change_background_x11(selType="random"):
 
     # Wallpaper -> pywal -> everything else
     run("wal", "-n", "-s", "-i", str(selected))
-    walscript(update='tkiv.py')
+    walscript(update='tkiv')
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +179,7 @@ def pick_set():
 
     selection = subprocess.check_output(
         [
-            "tkiv.py",
+            "tkiv",
             "select",
             "--dmenu-mode",
             "--gallery-rows",
@@ -334,10 +334,10 @@ def walscript(alpha="0.75", light=False, update=None):
 
 
     # -----------------------------------------------------------------------
-    # tkiv.py
+    # tkiv
     # -----------------------------------------------------------------------
 
-    def walscript_tkiv_py() :
+    def walscript_tkiv() :
         custom_str = f'''
         [theme]
         bg_primary =   {wal_colors[0]}
@@ -346,10 +346,7 @@ def walscript(alpha="0.75", light=False, update=None):
         selected_fg =  {wal_colors[0]}
         '''
 
-        if not(os.path.isdir(os.path.expanduser("~/.config/tkiv.py"))) :
-            os.mkdir(os.path.expanduser("~/.config/tkiv.py"))
-
-        with open(os.path.expanduser("~/.config/tkiv.py/config"),'w') as FILE :
+        with open(os.path.expanduser("~/.config/tkiv/config"),'w') as FILE :
             FILE.write(custom_str)
 
     # -----------------------------------------------------------------------
@@ -429,7 +426,7 @@ def walscript(alpha="0.75", light=False, update=None):
     "dmenu" : walscript_dmenu,
     "st" : walscript_st,
     "waybar" : walscript_waybar,
-    "tkiv.py"  : walscript_tkiv_py
+    "tkiv"  : walscript_tkiv
             }
 
 

@@ -12,36 +12,38 @@ with open(idxtemppath,'w') as FILE :
     FILE.write('0')
 
 if "I" not in ARG :
-    while  run :
-        with open(idxtemppath) as FILE :
-            curr_idx = FILE.read()
-        IMG = ""
-        try :
-            if ("U" in ARG) :
-                IMG=subprocess.check_output(
-                        f"tkiv.py select --sort mtime --lazy --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/Screenshots",shell=True,text=True).rstrip()
-
-            elif ("N" in ARG) :
-                IMG=subprocess.check_output(
-                        f"tkiv.py select --sort mtime --lazy --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/Named_Screenshots"
+    IMG = ""
+    with open(idxtemppath) as FILE :
+                curr_idx = FILE.read()
+    if ("U" in ARG) :
+        IMG=subprocess.check_output(
+            f"tkiv select --lazy --sort mtime --gallery -t $(find $HOME/Pictures/Screenshots -type d)"
                         ,shell=True,text=True).rstrip()
 
-            if not IMG :
+    elif ("N" in ARG) :
+        IMG=subprocess.check_output(
+            f"tkiv select --lazy --sort mtime --gallery -t $(find $HOME/Pictures/Named_Screenshots -type d)"
+                        ,shell=True,text=True).rstrip()
+
+    if not IMG :
                 IMG = subprocess.check_output(
-                        f"tkiv.py select --sort mtime --lazy --gallery -t --pass-idx {curr_idx} --idx-write-path {idxtemppath} $HOME/Pictures/*Screenshots"
+                        f"tkiv select --lazy --sort mtime --gallery -t $(find $HOME/Pictures/*Screenshots -type d)"
                         ,shell=True,text=True).rstrip()
+
+
+
+
+    imgargs = []
+    if IMG :
+        print(IMG)
+
+else :
+
+        try :
+            subprocess.run(
+                    f"tkiv img --floating-window --lazy --sort mtime --gallery -t $(find $HOME/Pictures/*Screenshots -type d)" ,shell=True,text=True)
 
         except subprocess.CalledProcessError as e:
             exit_code = int(e.returncode)
             if exit_code == 1 :
                 sys.exit()
-
-
-
-        imgargs = []
-        if IMG :
-            print(IMG)
-
-else :
-            subprocess.run(
-                    f"tkiv.py img --floating-window --lazy --gallery -t $HOME/Pictures/*Screenshots" ,shell=True,text=True)
