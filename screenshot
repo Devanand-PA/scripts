@@ -47,7 +47,7 @@ preferred_utility = "" # For custom utility
 if not preferred_utility :
     preferred_utility = find_utility()[0]
 
-DATE=datetime.datetime.now().strftime("%a %b %d %H:%M:%S %Z %Y")
+DATE=datetime.datetime.now().strftime("%Y %m %d %H:%M:%S")
 OPTIONS=""
 FILENAME=""
 if sys.argv[1] == "-s" :
